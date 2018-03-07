@@ -1,2 +1,2 @@
-ps -aux |awk '$1=="poo" {print $1}'| wc -l
-//poo is the username
+ps -aux |awk -v a="$USER" '$1==a {print $1}'| wc -l
+//bash variables need to be saved in variables inside awk in order to be used
