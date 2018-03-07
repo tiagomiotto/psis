@@ -16,7 +16,7 @@ int main(){
 	for (i=0; v1[i]!=0; i++){
 		v2[i] = toupper(v1[i]);
 	}
-
+	v2[i]='\0'; //Copying the /0 
 	printf("Converted string: %s", v2);
 	free(v2);
 
