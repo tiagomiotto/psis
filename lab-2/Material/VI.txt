@@ -1,1 +1,2 @@
-ps -aux | grep "$USER" | wc -l 
+ps -aux |awk '$1=="poo" {print $1}'| wc -l
+//poo is the username
