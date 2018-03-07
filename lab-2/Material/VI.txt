@@ -1,1 +1,1 @@
-ps -aux | grep "poo" | wc -l //poo is the username
+ps -aux | grep "$USER" | wc -l 
