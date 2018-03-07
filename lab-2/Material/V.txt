@@ -1,0 +1,10 @@
+Servidor com memory leaks, não se faz free, e quando tentarmos alocar a mesma memória de novo
+vai estar cheia de lixo
+
+Buffer overrun, tenta ler para além da memória atribuída ao vetor, lê-se lixo
+Buffer overflow, tenta escrever em memória não alocada, causa memory corruption
+
+No programa, ao fazer return a memória +e libertada, agora num servidor, se o programa ficar
+sempre correndo isso não acontece
+
+Unitialized memory, lê-se lixo, usar memset depois do malloc, ou atribuir memória com o calloc.
