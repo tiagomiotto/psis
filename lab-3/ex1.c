@@ -27,9 +27,8 @@ for (i = 0; i < n; ++i)
 
 int status;
 pid_t pid;
-while(n>0){
-	pid = wait(&status);
-	--n;
+while((wait(&status))>0){
+
 }
 return(0);
 }
