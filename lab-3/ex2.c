@@ -10,6 +10,7 @@ pid_t pids[10];
 int i;
 int n=10;
 int sec;
+/*Create first 10 children*/
 for (i = 0; i < n; ++i)
 {
 	if((pids[i] = fork())<0){
@@ -27,7 +28,7 @@ for (i = 0; i < n; ++i)
 
 int status;
 pid_t pid,pid2;
-
+/*Wait for them to exit and spawn a new child upon successfull exit*/
 while(n>0){
 	pid = wait(&status);
 	if (WIFEXITED(status)){
