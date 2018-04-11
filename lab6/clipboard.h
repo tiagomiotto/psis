@@ -13,6 +13,7 @@
 #include <arpa/inet.h>
 #include <sys/wait.h>
 #include <signal.h>
+#include <string.h>
 typedef struct Mensagem{
 	int region;
 	char dados[10];

@@ -13,10 +13,12 @@ int main(){
 	char *msg = malloc(sizeof(Mensagem));
 	int len_data;
 	char buff[10];
+
 	
 	//Prepare structs
 	memset(&hints,0,sizeof(hints));
-	hints.ai_family = AF_INET; //Only IPv4 for me
+	hints.ai_family = AF_INET; //Only IPv4 for me AF_UNIX
+	//sockaddr_un
 	hints.ai_socktype = SOCK_STREAM;
 	hints.ai_flags= AI_PASSIVE;
 	
@@ -51,7 +53,7 @@ int main(){
 		exit(1);
 	}
 
-	printf("Server: Connect to me bitches\n");
+	printf("Server: Connect to me \n");
 	
 	//Connect it
 	while(1){
@@ -64,24 +66,53 @@ int main(){
 	}
 
 	inet_ntop(AF_INET, &(their_addr.sin_addr),client,sizeof(client));
-	printf("Server: My man %s is online \n", client );
+	printf("Server: My man is online \n" );
 
 	
-	//Talk to me baby
+	//Talk to me
+
+	
 	while(1){ //Achar o signal, dar catch, e quebrar esse ciclo SIGPIPE
-	recv(new_fd, msg, sizeof(Mensagem),0);
+	if((recv(new_fd, msg, sizeof(Mensagem),0))==0) {
+		printf("My client disconnected, waiting for a new one\n");
+		break;
+	}
+
 	memcpy(&aux,msg,sizeof(Mensagem));
 		if(aux.oper==0) //Copy
 		{
+
+			if(strcmp(data[aux.region],"")==0){
+				//In case the region is empty
+			strcpy(aux.dados,"erro");
+			memcpy(msg,&aux,sizeof(Mensagem));
+
+			if((send(new_fd,msg, sizeof(aux),0))==-1){
+			perror("send"); //Do I need the number of bytes?
+			printf("My client disconnected\n");
+			break;
+			}	
+			printf("My man %s tried to copy from region %d, but it's empty\n",client,aux.region);
+		}				
+			
+			
+			else{
+				
 			strcpy(aux.dados,data[aux.region]);
 			memcpy(msg,&aux,sizeof(Mensagem));
-			if((send(new_fd,msg, sizeof(aux),MSG_NOSIGNAL))==-1); perror("send"); //Do I need the number of bytes?
+
+			if((send(new_fd,msg, sizeof(aux),0))==-1){
+			perror("send"); //Do I need the number of bytes?
+			printf("My client disconnected\n");
+			break;
+			}
 			printf("My man %s copied %s from region %d\n",client,data[aux.region],aux.region);
 		}
+			}
 		else if (aux.oper ==1 ) //Paste
-		{
+		{	
 			strcpy(data[aux.region],aux.dados);
-			printf("My man %s pasted %s to region %d\n",client,data[aux.region],aux.region);
+			printf("My client pasted %s to region %d\n",data[aux.region],aux.region);
 		}
 		
 	}
@@ -95,11 +126,3 @@ int main(){
 	
 }
 
-void *get_in_addr(struct sockaddr *sa)
-{
-    if (sa->sa_family == AF_INET) {
-        return &(((struct sockaddr_in*)sa)->sin_addr);
-    }
-
-    return &(((struct sockaddr_in6*)sa)->sin6_addr);
-}

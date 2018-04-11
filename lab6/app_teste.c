@@ -18,30 +18,42 @@ int main(){
 
 		
 		while((atoi(quit))==0){
+
 		printf("Write your phrase to be saved to the clipboard\n");
 		fgets(dados, 10, stdin);
-		printf("\n");
+		//printf("\n");
+		strtok(dados,"\n");
+		/*Already implemented in library
+		if((strcmp(dados,""))==0 || (strcmp(dados,"\n"))==0){
+			do{
+				printf("You can't paste an empty string, try again\n");
+				fgets(dados, 10, stdin);
+				printf("\n");
+				strtok(dados,"\n");
+				
+			}while((strcmp(dados,""))==0 || (strcmp(dados,"\n"))==0);
+		}*/
 		
 		printf("Write the region in which you want it to be saved 0-9\n");
 		fgets(region, 4,stdin);
-		printf("\n");
+		
 		region_int= atoi(region);
 		
 		if((clipboard_paste(fd,region_int,dados,10))<0) {
 			printf("paste failed \n");
 		}
-		else printf("Pasted: %s to region %d\n \n", dados,region_int);
+		else printf("Pasted: %s to region %d\n", dados,region_int);
 		
 
 		printf("Write the region which you want to read 0-9\n");
 		fgets(region, 4,stdin);
-		printf("\n");
+		
 		region_int= atoi(region);
 		
 		if((clipboard_copy(fd,region_int,dados2,10))<0){
 			printf("copy failed \n");
 		}
-		else printf("Copied %s from region %d\n \n", dados2, region_int);
+		else printf("Copied %s from region %d\n", dados2, region_int);
 		
 		printf("Continue? Type 0\n");
 		fgets(quit, 4,stdin);
