@@ -2,6 +2,7 @@
 #define MYPORT "1337"
 #define MAX_CALLS 10
 #define SOCK_PATH "./lab6_v2"
+#define SOCK_ADDR "127.0.0.1"
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -16,6 +17,7 @@
 #include <sys/un.h>
 #include <signal.h>
 #include <string.h>
+#include <time.h>
 typedef struct Mensagem{
 	int region;
 	char dados[10];

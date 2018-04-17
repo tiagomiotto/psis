@@ -33,7 +33,7 @@ int main(){
 				
 			}while((strcmp(dados,""))==0 || (strcmp(dados,"\n"))==0);
 		}*/
-		
+		//Guardar o tamanho do buffer na clipboard, trocar os dados de uma string pra uma struct, pra poder mandar tanto inteiros como strings
 		printf("Write the region in which you want it to be saved 0-9\n");
 		fgets(region, 4,stdin);
 		

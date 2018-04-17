@@ -57,7 +57,7 @@ int clipboard_connect(char * clipboard_dir){
 	return sockfd;
 
 }
-
+//Guardar o tamanho do buffer aqui, trocar os dados de uma string pra uma struct, pra poder mandar tanto inteiros como strings
 int clipboard_copy(int clipboard_id, int region, void *buf, size_t count){
 	Mensagem aux;
 	char *msg = malloc(sizeof(Mensagem));

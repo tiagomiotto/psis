@@ -4,25 +4,51 @@
  
 int main(int argc, char **argv){
 
-	int backup_sock;
-	if(argc>0){
-		if((strcmp(argv[0],"-c"))){
-			backup_sock=sincronize(argv[1], argv[2]);
-		}
-	}
 
+	//Variables for the UNIX SOCK
 	struct sockaddr_in their_addr;
 	socklen_t addr_size;
 	struct addrinfo hints, *res,*p;
 	int my_fd, new_fd,aux2;
 	int client;
+	
+	//Variables for communication
 	char data[10][10];
 	Mensagem aux;
 	char *msg = malloc(sizeof(Mensagem));
 	int len_data;
 	char buff[10];
+	
+	
+	//Variables for the Backup sock
+	int backup_sock=0,i,aux_backup;
+	
 
-	//Using Unix sockets
+	for(i=0;i<argc;i++) printf("%s\n",argv[i]);
+	//Connect to the backup server
+	if(argc==4){
+		if((strcmp(argv[1],"-c"))==0){
+			if((backup_sock=sincronize(argv[2], argv[3]))>0){
+				printf("Connected to the backup at %s:%s\n",argv[2],argv[3]);
+				for(i=0;i<10;i++){
+					backup_copy(backup_sock,i,data[i],sizeof(char)*10);
+				}
+			}
+			else{
+				printf("Backup not found, exiting \n");
+				return -1;
+		} 
+	} else {
+		printf("argv[1] != -c,exiting\n");
+		return -1;
+		}
+	}
+	else printf("Local mode\n");
+	
+	aux_backup=backup_sock; //Pra caso o backup morra
+	
+	
+	//Create unix sockets for client communication
 	if((my_fd=socket(AF_UNIX,SOCK_STREAM,0))<0){
 		printf("Socket unsuccessful\n");
 		return -1;
@@ -43,7 +69,7 @@ int main(int argc, char **argv){
 		return -1;
 	}
 
-
+	//Listen to it
 	if((listen(my_fd, MAX_CALLS)) == -1){
 		perror("listen");
 		exit(1);
@@ -61,26 +87,26 @@ int main(int argc, char **argv){
 		continue;
 	}
 
-	//inet_ntop(AF_INET, &(their_addr.sin_addr),client,sizeof(client));
+	
 	client++;
-	printf("Server: My friend is %d online \n", client );
+	printf("Server: My client %d is online \n", client );
 
 	
 	//Talk to me
-
-	
-	while(1){ //Achar o signal, dar catch, e quebrar esse ciclo SIGPIPE
+	while(1){ 
 	if((recv(new_fd, msg, sizeof(Mensagem),0))==0) {
 		printf("My client disconnected, waiting for a new one\n");
+		close(new_fd);
 		break;
-	}
-
+	}//Implementar verificação se a região esta fora do alcance aqui
+	//Guardar o tamanho do buffer aqui, trocar os dados de uma string pra uma struct, pra poder mandar tanto inteiros como strings
 	memcpy(&aux,msg,sizeof(Mensagem));
+
 		if(aux.oper==0) //Copy
 		{
 
 			if((strcmp(data[aux.region],""))==0 ||(strcmp(data[aux.region],"\n"))==0  ){
-				//In case the region is empty
+			//In case the region is empty
 			strcpy(aux.dados,"erro");
 			memcpy(msg,&aux,sizeof(Mensagem));
 
@@ -98,8 +124,8 @@ int main(int argc, char **argv){
 			strcpy(aux.dados,data[aux.region]);
 			memcpy(msg,&aux,sizeof(Mensagem));
 
-			if((send(new_fd,msg, sizeof(aux),0))==-1){S
-			perror("send"); //Do I need the number of bytes?
+			if((send(new_fd,msg, sizeof(aux),0))==-1){
+			perror("send"); 
 			printf("My client disconnected\n");
 			break;
 			}
@@ -110,9 +136,20 @@ int main(int argc, char **argv){
 		{	
 			strcpy(data[aux.region],aux.dados);
 			printf("My friend %d pasted %s to region %d\n",client,data[aux.region],aux.region);
+			int trash;	
+				if(backup_sock>0){ //Se o backup morrer o sockfd vai a 0
+				if((trash=backup_paste(backup_sock,aux.region,aux.dados,sizeof(aux.dados)))<0){
+				printf("The backup died, i'm in local mode now\n");
+				//return -1;
+				}
+		
+			}
+			if(aux_backup>0 && trash<0) printf("The backup died, i'm in local mode now\n"); // Não funciona ainda
+			
 		}
 		
-	}
+	
+}
 
 	close(new_fd);
 }
@@ -124,18 +161,14 @@ int main(int argc, char **argv){
 }
 
 int sincronize(char* addr, char* port){
-	struct sockaddr_in their_addr;
-	socklen_t addr_size;
-	struct addrinfo hints, *res,*p;
-	int my_fd, new_fd,aux2;
-	char client[INET6_ADDRSTRLEN];
-	char data[10][10];
-	Mensagem aux;
-	char *msg = malloc(sizeof(Mensagem));
-	int len_data;
-	char buff[10];
+    int sockfd, numbytes;  
+    char buf[MAXDATASIZE];
+    struct addrinfo hints, *servinfo, *p;
+    int aux2;
+    struct sockaddr_in ip;
+    char s[INET6_ADDRSTRLEN];
 
-	
+	printf("Connecting to backup at %s:%s\n",addr,port);
    	//Prepare structs
 	memset(&hints,0,sizeof(hints));
 	hints.ai_family = AF_INET; //Only IPv4 for me
@@ -151,13 +184,13 @@ int sincronize(char* addr, char* port){
 	//Make it, bind it, listen
 	for(p= servinfo; p!=NULL; p=p->ai_next){
 		if((sockfd=socket(p->ai_family, p->ai_socktype, p->ai_protocol))==-1){
-			perror("server: socket");
+			perror("backup: socket");
 			continue;
 		}
 
 		if((connect(sockfd,p->ai_addr,p->ai_addrlen))== -1){
 			close(sockfd);
-			perror("server:bind");
+			perror("backup:connect");
 			continue;
 		}
 		break;
@@ -169,8 +202,52 @@ int sincronize(char* addr, char* port){
 	}
 	free(servinfo);
 
-	inet_ntop(p->ai_family,&(((struct sockaddr_in *)p->ai_addr)->sin_addr),s, sizeof s);
+	//inet_ntop(p->ai_family,&(((struct sockaddr_in *)p->ai_addr)->sin_addr),s, sizeof s);
 
-	printf("Connected to my bro %s\n", s);
+	//printf("Connected to backup at %s\n", s);
 	return sockfd;
+}
+int backup_copy(int clipboard_id, int region, void *buf, size_t count){
+	Mensagem aux;
+	char *msg = malloc(sizeof(Mensagem));
+	aux.region=region;
+	aux.oper=0;
+	
+	memcpy(msg,&aux,sizeof(Mensagem));
+	send(clipboard_id,msg,sizeof(Mensagem),0);
+	
+	if((recv(clipboard_id,msg,sizeof(Mensagem),0))<0) return -1;
+	memcpy(&aux,msg,sizeof(Mensagem));
+	if((strcmp(aux.dados,"erro"))!=0){
+	strcpy(buf,aux.dados);
+	printf("Copied %s from the region %d of the backup\n",buf,region);}
+	else {
+		printf("Region %d is empty\n",region);
+		return -1;
+}
+	
+	free(msg);
+	return strlen(buf);
+}
+
+int backup_paste(int clipboard_id, int region, void *buf, size_t count){
+	Mensagem aux;
+	char *msg = malloc(sizeof(Mensagem));
+	int retorno;
+	if((strcmp(buf,""))==0 || (strcmp(buf,"\n"))==0){
+		printf("You can't paste an empty line\n");
+		return -1;
+	}
+	strcpy(aux.dados,buf);
+	aux.region=region;
+	aux.oper=1;
+	memcpy(msg,&aux,sizeof(Mensagem));
+	retorno=send(clipboard_id,msg,sizeof(Mensagem),0);
+	if(retorno<=0){
+		printf("Problem sending\n");
+		return -1;
+	}
+
+	free(msg);
+	return retorno;
 }
