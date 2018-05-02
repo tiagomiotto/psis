@@ -15,42 +15,7 @@ int clipboard_connect(char * clipboard_dir){
 	memset(&addr,0,sizeof(addr));
 	addr.sun_family = AF_UNIX;
 	strncpy(addr.sun_path, clipboard_dir, sizeof(addr.sun_path)-1);
-	/*
-    	//Prepare structs
-	memset(&hints,0,sizeof(hints));
-	hints.ai_family = AF_INET; //Only IPv4 for me
-	hints.ai_socktype = SOCK_STREAM;
 	
-
-	
-	if((aux2=getaddrinfo(clipboard_dir,MYPORT,&hints,&servinfo)) !=0){
-		printf("getaddrinfo: \n");
-		return -1;
-	}
-
-	//Make it, bind it, listen
-	for(p= servinfo; p!=NULL; p=p->ai_next){
-		if((sockfd=socket(p->ai_family, p->ai_socktype, p->ai_protocol))==-1){
-			perror("server: socket");
-			continue;
-		}
-
-		if((connect(sockfd,p->ai_addr,p->ai_addrlen))== -1){
-			close(sockfd);
-			perror("server:bind");
-			continue;
-		}
-		break;
-	}
-
-	if(p==NULL){
-		printf("server: failed to bind\n");
-		exit(1);
-	}
-	free(servinfo);
-
-	inet_ntop(p->ai_family,&(((struct sockaddr_in *)p->ai_addr)->sin_addr),s, sizeof s);
-	*/
 	if((connect(sockfd,(struct sockaddr*) &addr, sizeof(struct sockaddr_un)))==-1){
             close(sockfd);
             perror("client: connect");

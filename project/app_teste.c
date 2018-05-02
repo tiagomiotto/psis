@@ -5,35 +5,28 @@
 
 int main(){
 		
-		int fd = clipboard_connect(SOCK_PATH);
-		if(fd<0) return 0;
-		char *msg;
-		if(fd== -1){
-			exit(-1);
-		}
+
+		char path[20];
 		char dados[10];
 		char dados2[10];
 		char region[4];
 		int region_int;
 		char quit[4];
-
+		printf("Write the path of the\n");
+		fgets(path, 20, stdin);
+		strtok(path,"\n");
+		
+		int fd = clipboard_connect(path);
+		char *msg;
+		if(fd== -1){
+			exit(-1);
+		}
 		
 		while((atoi(quit))==0){
 
 		printf("Write your phrase to be saved to the clipboard\n");
 		fgets(dados, 10, stdin);
-		//printf("\n");
 		strtok(dados,"\n");
-		/*Already implemented in library
-		if((strcmp(dados,""))==0 || (strcmp(dados,"\n"))==0){
-			do{
-				printf("You can't paste an empty string, try again\n");
-				fgets(dados, 10, stdin);
-				printf("\n");
-				strtok(dados,"\n");
-				
-			}while((strcmp(dados,""))==0 || (strcmp(dados,"\n"))==0);
-		}*/
 		
 		printf("Write the region in which you want it to be saved 0-9\n");
 		fgets(region, 4,stdin);

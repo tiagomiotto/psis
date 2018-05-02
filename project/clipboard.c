@@ -10,26 +10,33 @@ void *clipboard_handler(void* sock);
 int create_inet_sock(char* port);
 void *app_connection_handler(void*  sock);
 void *clipboard_connection(void* sock);
+
+
 int cl=0;
+int backup_sock=0;
+pthread_mutex_t lock;
+
+	char data[10][10];
+	Mensagem aux;
+	char *msg;
+	int len_data;
+	char buff[10];
+
 
 int main(int argc, char **argv){
 	unlink("127.0.0.1");
-
+	
 	//Variables for the UNIX SOCK
 	pthread_t client_thread,clip_thread;
-
+	msg = malloc(sizeof(Mensagem));
 	
 	//Variables for communication
-	char data[10][10];
-	Mensagem aux;
-	char *msg = malloc(sizeof(Mensagem));
-	int len_data;
-	char buff[10];
+
 	int client;
 	
 	
 	//Variables for the Backup sock
-	int backup_sock=0,i,aux_backup;
+	int i,aux_backup;
 	char port[10];
 	srand(time(NULL));
 	sprintf(port,"%d",(rand()%64738+1024));
@@ -37,7 +44,13 @@ int main(int argc, char **argv){
 	int my_inet,my_unix;
 	my_inet=create_inet_sock(port);
 	my_unix=create_unix_sock();
-
+	
+	if (pthread_mutex_init(&lock, NULL) != 0)
+    {
+        printf("\n mutex init failed\n");
+        return 1;
+    }
+    
 	for(i=0;i<argc;i++) printf("%s\n",argv[i]);
 	//Connect to the backup server
 	if(argc==4){
@@ -63,12 +76,15 @@ int main(int argc, char **argv){
 	if(my_unix>0)pthread_create(&client_thread,NULL,app_connect,&my_unix);
 	if(my_inet>0)pthread_create(&clip_thread,NULL,clipboard_connection,&my_inet);
 	
-	 pthread_join(clip_thread, NULL);
-	 pthread_join(client_thread, NULL);
-	
+	pthread_join(clip_thread, NULL);
+	pthread_join(client_thread, NULL);
+	//Fazer signhandler pra matar todas as threads no CTRL+C
+	//descobrir como matar todas as threads sem guardar os ids
+	//pthread_cleanup_push(3)?
 	//unlink(addr.sun_path);
 	close(my_inet); //I don't want to listen anymore
 	close(my_unix); //I don't want to listen anymore
+	pthread_mutex_destroy(&lock);
 	free(msg);
 	exit(0);
 	
@@ -179,11 +195,13 @@ int create_unix_sock(){
 		printf("Socket unsuccessful\n");
 		return -1;
 	}
-	
+	int pid= getpid();
+	char path[20];
+	sprintf(path,"%s_%d",SOCK_PATH,pid);
 	memset(&addr,0,sizeof(addr));
 	addr.sun_family = AF_UNIX;
-	strcpy(addr.sun_path, SOCK_PATH);
-	//unlink(SOCK_PATH);
+	strcpy(addr.sun_path, path);
+	unlink(path);
 		
 		
 	if((bind (my_fd, (struct sockaddr*)&addr, sizeof(struct sockaddr)))<0){
@@ -194,6 +212,7 @@ int create_unix_sock(){
 		return -1;
 	}
 	chmod(SOCK_PATH, 0777);
+	printf("Unix socket creation successfull at %s\n", path);
 	return my_fd;
 }
 
@@ -201,12 +220,8 @@ void *app_connection_handler(void*  sock){
 	
 	//Talk to me
 	int new_fd = *(int*)sock;
-	char data[10][10];
-	Mensagem aux;
-	char *msg = malloc(sizeof(Mensagem));
-	int len_data;
-	char buff[10];
-	int client;
+
+	int client=cl;
 	printf("App handler thread created\n");
 	while(1){ 
 	if((recv(new_fd, msg, sizeof(Mensagem),0))==0) {
@@ -216,7 +231,9 @@ void *app_connection_handler(void*  sock){
 	}//Implementar verificação se a região esta fora do alcance aqui
 	//Guardar o tamanho do buffer aqui, trocar os dados de uma string pra uma struct, pra poder mandar tanto inteiros como strings
 	memcpy(&aux,msg,sizeof(Mensagem));
-
+	printf("mutex at client %d locking\n",client);
+		pthread_mutex_lock(&lock);
+		
 		if(aux.oper==0) //Copy
 		{
 
@@ -252,15 +269,16 @@ void *app_connection_handler(void*  sock){
 			strcpy(data[aux.region],aux.dados);
 			printf("My friend %d pasted %s to region %d\n",client,data[aux.region],aux.region);
 		
-			}
-			//if(aux_backup>0 && trash<0) printf("The backup died, i'm in local mode now\n"); // Não funciona ainda
-			
+		}
+		pthread_mutex_unlock(&lock);
+		printf("mutex at client %d unlocking\n",client);	
 		
 		
 	
 	}
 
 	close(new_fd);
+	pthread_exit(NULL);
 }
 void *clipboard_connection(void* sock){
 	int my_fd = *(int*)sock;
@@ -287,7 +305,9 @@ void *clipboard_connection(void* sock){
 	}
 	else pthread_create(&tid,NULL,clipboard_handler,&new_fd);
 	}
+	
 	 pthread_join(tid, NULL);
+	 pthread_exit(NULL);
 }
 void *app_connect(void*  sock){
 
@@ -297,7 +317,7 @@ void *app_connect(void*  sock){
 	pthread_t tid;
 	socklen_t addr_size;
 	printf("App thread created\n");
-	//printf("Server: Connect to me \n");
+	
 	
 	if((listen(my_fd, MAX_CALLS)) == -1){
 		perror("listen");
@@ -312,39 +332,64 @@ void *app_connect(void*  sock){
 	new_fd=accept(my_fd, NULL,NULL);
 	if((new_fd)==-1){
 		perror("accept");
-		exit(1);}
+		pthread_exit(NULL);}
 	else{
-		cl++;
+		
 		pthread_create(&tid,NULL,app_connection_handler,&new_fd);
+		cl++;
 		//continue;
 	}
 	}
 	printf("a\n");
 	pthread_join(tid, NULL);
-	//pthread_exit(NULL);
+	pthread_exit(NULL);
 	//*sock=new_fd;
 
 }
-void *clipboard_handler(void* sock){
+void *clipboard_handler(void* sock){ //Falta arrumar aqui
 	
 	int new_fd = *(int*)sock;
-	char data[10][10];
-	Mensagem aux;
-	char *msg = malloc(sizeof(Mensagem));
-	int len_data;
-	char buff[10];
+	char data_aux[10][10];
+	int i,j;
 	int client;
+	
 	printf("Clipboard handler thread created\n");
 	printf("Server: My at client %d is online \n", cl );
+	
+	for(i=0;i<10;i++)
+			strcpy(data_aux[i],data[i]);
 
 	//Talk to me
 	while(1){ //Guardar o tamanho do buffer aqui, trocar os dados de uma string pra uma struct, pra poder mandar tanto inteiros como strings
+	bool new= false;
+	int x; 
+	while(new==false){ //Tem que ter um break pra caso receba uma mensagem
+	for(i=0;i<10;i++){
+			x=strcmp(data_aux[i],data[i]);
+			if(x!=0){
+				new=true;
+				break;
+			}
+		}
+	}
+	if(new==true) { //Propaga pro backup
+		backup_paste(backup_sock,i,data_aux[i],strlen(data_aux[i]));
+		new=false;
+		strcpy(data_aux[i],data[i]);
+	}
+	
+	
 	if((recv(new_fd, msg, sizeof(Mensagem),0))==0) {
 		printf("My client disconnected, waiting for a new one\n");
 		break;
 	}
+	
+
+	
+	
 
 		memcpy(&aux,msg,sizeof(Mensagem));
+		
 		if(aux.oper==0) //Copy
 		{
 
@@ -356,7 +401,9 @@ void *clipboard_handler(void* sock){
 			if((send(new_fd,msg, sizeof(aux),0))==-1){
 			perror("send"); //Do I need the number of bytes?
 			printf("My client disconnected\n");
+			
 			break;
+		
 			}	
 			printf("My friend at %d tried to copy from region %d, but it's empty\n",cl,aux.region);
 		}				
@@ -371,17 +418,25 @@ void *clipboard_handler(void* sock){
 			perror("send"); //Do I need the number of bytes?
 			printf("My client disconnected\n");
 			break;
+			
 			}
 			printf("My friend at %d copied %s from region %d\n",cl,data[aux.region],aux.region);
 		}
 			}
+			
 		else if (aux.oper ==1 ) //Paste
 		{	
+			pthread_mutex_lock(&lock);
+			printf("mutex locking\n");
 			strcpy(data[aux.region],aux.dados);
 			printf("My client pasted %s to region %d\n",data[aux.region],aux.region);
 		}
+		printf("mutex unlocking\n");
+		pthread_mutex_unlock(&lock);
 		
 	}
+	close(new_fd);
+		pthread_exit(NULL);
 }
 int create_inet_sock(char* port){
 	//Variables for the unix socket (Talvez fazer isso dentro de uma função?)
