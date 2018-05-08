@@ -23,7 +23,7 @@
 #include <stdbool.h>
 typedef struct Mensagem{
 	int region;
-	char dados[10];
+	size_t dataSize;
 	int oper;
 }Mensagem;
 
