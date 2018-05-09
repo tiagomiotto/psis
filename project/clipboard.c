@@ -15,15 +15,21 @@ void *clipboard_handler(void* sock);
 int create_inet_sock(char* port);
 void *app_connection_handler(void*  sock);
 void *clipboard_connection(void* sock);
+void *propagation_handler();
+void remove_me(int sockfd);
+void add_me(int sockfd);
+
 Clipboard_struct initLocalCp(void);
 
-
+int* c_sock;
+size_t c_sock_size;
 
 
 
 int cl=0;
 int backup_sock=0;
 pthread_mutex_t lock;
+pthread_mutex_t lock_c;
 
 	Clipboard_struct clipboard; 
 	Mensagem aux;
@@ -34,13 +40,17 @@ pthread_mutex_t lock;
 
 int main(int argc, char **argv){
 	unlink("127.0.0.1");
+
 	
-	//Variables for the UNIX SOCK
-	pthread_t client_thread,clip_thread;
+	//Thread variables
+	pthread_t client_thread,clip_thread,propaga_thread;
 	msg = malloc(sizeof(Mensagem));
+	c_sock_size=1;
+	c_sock= malloc(sizeof(int));
+
+
 	
 	//Variables for communication
-
 	int client;
 	
 	
@@ -65,8 +75,11 @@ int main(int argc, char **argv){
 	if(argc==4){
 		if((strcmp(argv[1],"-c"))==0){
 			if((backup_sock=sincronize(argv[2], argv[3]))>0){
+
 				printf("Connected to the backup at %s:%s\n",argv[2],argv[3]);
+					c_sock[c_sock_size-1]=backup_sock;
 				for(i=0;i<10;i++){
+
 					backup_copy(backup_sock,i,clipboard.data[i],sizeof(char)*10);
 					printf("data[%d]: %s\n", i, (char *)clipboard.data[i]);
 				}
@@ -87,9 +100,10 @@ int main(int argc, char **argv){
 	
 	if(my_unix>0)pthread_create(&client_thread,NULL,app_connect,&my_unix);
 	if(my_inet>0)pthread_create(&clip_thread,NULL,clipboard_connection,&my_inet);
-	
+	pthread_create(&propaga_thread,NULL,propagation_handler,NULL);
 	pthread_join(clip_thread, NULL);
 	pthread_join(client_thread, NULL);
+	pthread_join(propaga_thread, NULL);
 	//Fazer signhandler pra matar todas as threads no CTRL+C
 	//descobrir como matar todas as threads sem guardar os ids
 	//pthread_cleanup_push(3)?
@@ -175,10 +189,12 @@ int backup_copy(int clipboard_id, int region, void *buf, size_t count){
 	recv(clipboard_id, &okFlag, sizeof(int), 0); //Lê se o cliente tem espaço para receber a informação
 	printf("okFlag: %d\n", okFlag);
 
+
 	if(okFlag==1){
 		if((recv(clipboard_id,msg,sizeof(Mensagem),0))<0) return -1;
 		printf("First recv ok\n");
 		memcpy(&aux,msg,sizeof(Mensagem));
+		buf= malloc(aux.dataSize);
 		if((recv(clipboard_id, buf, aux.dataSize, 0))<0) return -1;
 		printf("dataSize %zx\n", aux.dataSize);
 		/*printf("okFlag: %d\n", okFlag);
@@ -220,6 +236,7 @@ int backup_paste(int clipboard_id, int region, void *buf, size_t count){
 	retorno=send(clipboard_id,msg,sizeof(Mensagem),0); //informa o clipboard do tamanho da mensagem
 	if(retorno<=0){
 		printf("Problem sending info\n");
+		remove_me(clipboard_id);
 		free(msg);
 		free(data);
 		return -1;
@@ -227,6 +244,7 @@ int backup_paste(int clipboard_id, int region, void *buf, size_t count){
 	recv(clipboard_id, &okFlag, sizeof(int), 0); //recebe o OK do clipboard depois de ter alocado memória para receber a mensagem
 	if (!okFlag){
 		printf("Problem with clipboard\n");
+		remove_me(clipboard_id);
 		free(msg);
 		free(data);		
 		return -1;
@@ -235,6 +253,7 @@ int backup_paste(int clipboard_id, int region, void *buf, size_t count){
 	retorno=send(clipboard_id, data, aux.dataSize, 0); //envia a mensagem
 	if(retorno<=0){
 		printf("Problem sending data\n");
+		remove_me(clipboard_id);
 		free(msg);
 		free(data);
 		return -1;
@@ -265,6 +284,8 @@ int create_unix_sock(){
 	strcpy(addr.sun_path, path);
 	unlink(path);
 		
+	chmod(SOCK_PATH, 0777);
+	chmod(path, 0777);
 		
 	if((bind (my_fd, (struct sockaddr*)&addr, sizeof(struct sockaddr)))<0){
 		printf("Bind unsuccessful\n");
@@ -273,11 +294,51 @@ int create_unix_sock(){
 		close(my_fd);
 		return -1;
 	}
-	chmod(SOCK_PATH, 0777);
 	printf("Unix socket creation successfull at %s\n", path);
 	return my_fd;
 }
+int create_inet_sock(char* port){
+	//Variables for the unix socket (Talvez fazer isso dentro de uma função?)
+	struct sockaddr_in their_addr;
+	socklen_t addr_size;
+	struct addrinfo hints, *res,*p;
+	int my_fd, new_fd,aux2;
+	
+	//Prepare structs for the socket
+	memset(&hints,0,sizeof(hints));
+	hints.ai_family = AF_INET; //Only IPv4 for me AF_UNIX
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_flags= AI_PASSIVE;
+	unlink("127.0.0.1");
+	if((aux2=getaddrinfo(NULL,port,&hints,&res)) !=0){
+		printf("getaddrinfo: \n");
+		return -1;
+	}
 
+	//Make it, bind it, listen
+	for(p= res; p!=NULL; p=p->ai_next){
+		if((my_fd=socket(p->ai_family, p->ai_socktype, p->ai_protocol))==-1){
+			perror("server: socket");
+			continue;
+		}
+
+		if((bind(my_fd,p->ai_addr,p->ai_addrlen))== -1){
+			close(my_fd);
+			unlink("127.0.0.1");
+			perror("server:bind");
+			continue;
+		}
+		break;
+	}
+
+	if(p==NULL){
+		printf("server: failed to bind\n");
+		return -1;
+	}
+	free(res);
+	printf("Backup at %s:%s\n", SOCK_ADDR,port);
+	return my_fd;
+}
 void *app_connection_handler(void*  sock){
 	//Talk to me
 	void *data;
@@ -378,7 +439,7 @@ void *clipboard_connection(void* sock){
 	pthread_t tid;
 	socklen_t addr_size;
 	printf("Clipboard thread created\n");
-
+	if(c_sock[0]>0)pthread_create(&tid,NULL,clipboard_handler,&c_sock[0]); //para o backup
 	if((listen(my_fd, MAX_CALLS)) == -1){
 		perror("listen");
 		exit(1);
@@ -394,7 +455,10 @@ void *clipboard_connection(void* sock){
 		perror("accept");
 		continue;
 	}
-	else pthread_create(&tid,NULL,clipboard_handler,&new_fd);
+	else {
+		add_me(new_fd);
+		pthread_create(&tid,NULL,clipboard_handler,&new_fd);
+	}
 	}
 	
 	 pthread_join(tid, NULL);
@@ -552,50 +616,43 @@ void *clipboard_handler(void* sock){ //Falta arrumar aqui
 		printf("mutex unlocking\n");				
 		
 	}
-		
+	remove_me(new_fd);
 	close(new_fd);
 	pthread_exit(NULL);
 }
+void *propagation_handler(){
+	Clipboard_struct clipboard_cpy= clipboard;
 
-int create_inet_sock(char* port){
-	//Variables for the unix socket (Talvez fazer isso dentro de uma função?)
-	struct sockaddr_in their_addr;
-	socklen_t addr_size;
-	struct addrinfo hints, *res,*p;
-	int my_fd, new_fd,aux2;
-	
-	//Prepare structs for the socket
-	memset(&hints,0,sizeof(hints));
-	hints.ai_family = AF_INET; //Only IPv4 for me AF_UNIX
-	hints.ai_socktype = SOCK_STREAM;
-	hints.ai_flags= AI_PASSIVE;
-	unlink("127.0.0.1");
-	if((aux2=getaddrinfo(NULL,port,&hints,&res)) !=0){
-		printf("getaddrinfo: \n");
-		return -1;
-	}
-
-	//Make it, bind it, listen
-	for(p= res; p!=NULL; p=p->ai_next){
-		if((my_fd=socket(p->ai_family, p->ai_socktype, p->ai_protocol))==-1){
-			perror("server: socket");
-			continue;
+	while(1){
+		int i,j;
+		for (i = 0; i < 10; ++i) //entra num ciclo infinito de sends
+		{
+			if(clipboard_cpy.data[i]!=clipboard.data[i]){ //Ponteiros alterados apontam pra outra memoria
+				for(j=0;j<c_sock_size;j++) backup_paste(c_sock[j],i,clipboard.data[i],clipboard.dataSize[i]);
+				//free(clipboard_cpy.data[i]);
+				clipboard_cpy.data[i]=clipboard.data[i];
+			}
 		}
-
-		if((bind(my_fd,p->ai_addr,p->ai_addrlen))== -1){
-			close(my_fd);
-			unlink("127.0.0.1");
-			perror("server:bind");
-			continue;
-		}
-		break;
-	}
-
-	if(p==NULL){
-		printf("server: failed to bind\n");
-		return -1;
-	}
-	free(res);
-	printf("Backup at %s:%s\n", SOCK_ADDR,port);
-	return my_fd;
+	} 
 }
+void remove_me(int sockfd){
+	int i,j;
+	pthread_mutex_lock(&lock_c);
+	for (i = 0; i < c_sock_size; ++i) if(c_sock[i]==sockfd) break;
+	else for(j=i;j<c_sock_size-1;j++) c_sock[i]=c_sock[i+1];
+	c_sock= realloc(c_sock, (c_sock_size-1)*sizeof(int));
+	c_sock_size--;
+	pthread_mutex_unlock(&lock_c);
+
+}
+
+void add_me(int sockfd){
+	
+	pthread_mutex_lock(&lock_c);
+	c_sock= realloc(c_sock, (c_sock_size+1)*sizeof(int));
+	c_sock_size++;
+	c_sock[c_sock_size-1]=sockfd;
+	pthread_mutex_unlock(&lock_c);
+}
+
+
