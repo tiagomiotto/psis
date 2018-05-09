@@ -175,43 +175,36 @@ int sincronize(char* addr, char* port){
 	return sockfd;
 }
 int backup_copy(int clipboard_id, int region, void *buf, size_t count){
+
 	int okFlag;
 	Mensagem aux;
 	void *msg = malloc(sizeof(Mensagem));
-	void *auxData = malloc(count);
 	aux.region=region;
 	aux.oper=0;
-	aux.dataSize = count;
 	
 	memcpy(msg,&aux,sizeof(Mensagem));
 	send(clipboard_id,msg,sizeof(Mensagem),0);
 
-	recv(clipboard_id, &okFlag, sizeof(int), 0); //Lê se o cliente tem espaço para receber a informação
-	printf("okFlag: %d\n", okFlag);
+	recv(clipboard_id, msg, sizeof(Mensagem), 0); //Lê se o cliente tem espaço para receber a informação
+	memcpy(&aux, msg, sizeof(Mensagem));
+	printf("allocSize: %zu\n", aux.dataSize);
 
-
-	if(okFlag==1){
-		if((recv(clipboard_id,msg,sizeof(Mensagem),0))<0) return -1;
-		printf("First recv ok\n");
-		memcpy(&aux,msg,sizeof(Mensagem));
-		buf= malloc(aux.dataSize);
-		if((recv(clipboard_id, buf, aux.dataSize, 0))<0) return -1;
-		printf("dataSize %zx\n", aux.dataSize);
-		/*printf("okFlag: %d\n", okFlag);
-		if((recv(clipboard_id,msg,sizeof(Mensagem),0))<0) return -1;
-		printf("okFlag: %d\n", okFlag);
-		memcpy(&aux,msg,sizeof(Mensagem));
-		if((recv(clipboard_id, buf, aux.dataSize, 0))<0) {
-			printf("buf: %s\n", (char *)buf);
+	if(aux.dataSize > 0){
+		clipboard.data[region] = malloc(aux.dataSize);
+		if(clipboard.data[region] == NULL){
+			printf("Error allocating clipboard memory\n");
+		}
+		clipboard.dataSize[region] = aux.dataSize;
+		if((recv(clipboard_id, clipboard.data[region], aux.dataSize, 0))<0){
+			free(msg);
 			return -1;
-		}*/
-		//buf = auxData;
-	} else if(okFlag == 2){ //position is empty
-		free(msg);
-		buf = NULL;
+		} 
+		
+	}else{ //position is empty or error
+		clipboard.data[region] = NULL;
 		printf("position empty\n");
 		return 0;
-	}else printf("OkFlag2 %d\n", okFlag);
+	}
 	free(msg);
 	return aux.dataSize;
 }
@@ -505,35 +498,18 @@ void *clipboard_handler(void* sock){ //Falta arrumar aqui
 	void *data;
 	int new_fd = *(int*)sock;
 	char data_aux[10][10];
-	int i,j;
+	int i,j, okFlag;
 	int client;
-	const int error = 0, success = 1, empty = 2;
+	size_t dataSizeToSend;
 	
 	printf("Clipboard handler thread created\n");
 	printf("Server: My at client %d is online \n", cl );
 	
-	/*for(i=0;i<10;i++)
-			strcpy(data_aux[i],data[i]);*/
+
 
 	//Talk to me
 	while(1){ //Guardar o tamanho do buffer aqui, trocar os dados de uma string pra uma struct, pra poder mandar tanto inteiros como strings
-		/*bool new= false;
-		int x; 
-		while(new==false){ //Tem que ter um break pra caso receba uma mensagem
-			for(i=0;i<10;i++){
-				x=strcmp(data_aux[i],data[i]);
-				if(x!=0){
-					new=true;
-					break;
-				}
-			}
-		}
-		if(new==true) { //Propaga pro backup
-			backup_paste(backup_sock,i,data_aux[i],strlen(data_aux[i]));
-			new=false;
-			strcpy(data_aux[i],data[i]);
-		}
-		*/
+
 		
 		if((recv(new_fd, msg, sizeof(Mensagem),0))==0) {
 			printf("My client disconnected, waiting for a new one\n");
@@ -548,24 +524,30 @@ void *clipboard_handler(void* sock){ //Falta arrumar aqui
 
 			if(clipboard.dataSize[aux.region]==0){
 				//In case the region is empty
-				if((send(new_fd, &empty, sizeof(int), 0))==-1){
+				aux.dataSize = clipboard.dataSize[aux.region];
+				printf("empty okFlag: %d\n", (int)aux.dataSize);
+				memcpy(msg,&aux,sizeof(Mensagem));
+				if((send(new_fd, msg, sizeof(Mensagem), 0))==-1){
 					perror("send"); //Do I need the number of bytes?
 					printf("My client %d disconnected\n", client);
 					break;
 				}	
 				printf("My client %d tried to copy from region %d, but it's empty\n",client,aux.region);
 			} 
-			else if(aux.dataSize < clipboard.dataSize[aux.region]){//cliente não tem espaço
+			/*else if(aux.dataSize < clipboard.dataSize[aux.region]){//cliente não tem espaço
 				if((send(new_fd, &error, sizeof(int), 0))==-1){
 					perror("send");
 					printf("My client %d disconnected\n", client);
 					break;
 				}	
 				printf("My client %d tried to copy from region %d, but he doesn't have enough space\n",client,aux.region);
-			}			
+			}*/			
 			else{ //all good
 				printf("Tou a mandar success\n");
-				if((send(new_fd, &success, sizeof(int), 0))==-1){
+				aux.dataSize = clipboard.dataSize[aux.region];
+				printf("okFlag: %d\n", (int)aux.dataSize);
+				memcpy(msg,&aux,sizeof(Mensagem));
+				if((send(new_fd, msg, sizeof(Mensagem), 0))==-1){
 					perror("send");
 					printf("My client %d disconnected\n", client);
 					break;
@@ -575,16 +557,16 @@ void *clipboard_handler(void* sock){ //Falta arrumar aqui
 				
 				memcpy(msg,&aux,sizeof(Mensagem));
 
-				if((send(new_fd, msg, sizeof(Mensagem), 0))==-1){
-					perror("send"); 
-					printf("My client disconnected\n");
-					break;
-				}
 				if((send(new_fd, clipboard.data[aux.region], aux.dataSize, 0))==-1){
 					perror("send"); 
 					printf("My client disconnected\n");
 					break;
 				}
+				/*if((send(new_fd, clipboard.data[aux.region], aux.dataSize, 0))==-1){
+					perror("send"); 
+					printf("My client disconnected\n");
+					break;
+				}*/
 				printf("My friend %d copied %s from region %d\n",client,(char *)clipboard.data[aux.region], aux.region);
 			}
 		}
@@ -618,6 +600,7 @@ void *clipboard_handler(void* sock){ //Falta arrumar aqui
 	}
 	remove_me(new_fd);
 	close(new_fd);
+
 	pthread_exit(NULL);
 }
 void *propagation_handler(){
