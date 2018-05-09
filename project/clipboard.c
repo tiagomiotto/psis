@@ -24,7 +24,7 @@ Clipboard_struct initLocalCp(void);
 int* c_sock;
 size_t c_sock_size;
 
-
+int clip_rcv=0;
 
 int cl=0;
 int backup_sock=0;
@@ -32,6 +32,7 @@ pthread_mutex_t lock;
 pthread_mutex_t lock_c;
 
 	Clipboard_struct clipboard; 
+	
 	Mensagem aux;
 	void *msg;
 	int len_data;
@@ -414,7 +415,7 @@ void *app_connection_handler(void*  sock){
 				clipboard.data[aux.region] = data;
 			}
 			
-			printf("My friend %d pasted %s to region %d\n",client,(char *)clipboard.data[aux.region],aux.region);
+			printf("My friend %d pasted %s to region %d\n",new_fd,(char *)clipboard.data[aux.region],aux.region);
 
 		}
 		pthread_mutex_unlock(&lock);
@@ -581,7 +582,7 @@ void *clipboard_handler(void* sock){ //Falta arrumar aqui
 			}
 			else{
 				pthread_mutex_lock(&lock);
-				printf("mutex locking\n");
+				//printf("mutex locking\n");
 				okFlag = 1;
 				send(new_fd, &okFlag, sizeof(int), 0);
 				recv(new_fd, data, aux.dataSize, 0);
@@ -589,13 +590,14 @@ void *clipboard_handler(void* sock){ //Falta arrumar aqui
 				free(clipboard.data[aux.region]);
 				clipboard.dataSize[aux.region] = aux.dataSize;
 				clipboard.data[aux.region] = data;
+				clip_rcv = new_fd;
 			}
 			
 			printf("My friend %d pasted %s to region %d\n",client,(char *)clipboard.data[aux.region],aux.region);
 
 		}
 		pthread_mutex_unlock(&lock);
-		printf("mutex unlocking\n");				
+		//printf("mutex unlocking\n");				
 		
 	}
 	remove_me(new_fd);
@@ -604,22 +606,33 @@ void *clipboard_handler(void* sock){ //Falta arrumar aqui
 	pthread_exit(NULL);
 }
 void *propagation_handler(){
-	Clipboard_struct clipboard_cpy= clipboard;
+	Clipboard_struct clipboard_cpy=clipboard;
 
 	while(1){
 		int i,j;
 		for (i = 0; i < 10; ++i) //entra num ciclo infinito de sends
 		{
 			if(clipboard_cpy.data[i]!=clipboard.data[i]){ //Ponteiros alterados apontam pra outra memoria
-				for(j=0;j<c_sock_size;j++) backup_paste(c_sock[j],i,clipboard.data[i],clipboard.dataSize[i]);
+				for(j=0;j<c_sock_size;j++) {
+					
+					//Para não mandarr pro mesmo lado
+					if(c_sock[j]!=clip_rcv  && c_sock[j]>0){
+						backup_paste(c_sock[j],i,clipboard.data[i],clipboard.dataSize[i]);
+						printf("Propagating to %d:%d of c_sock_size %zu\n",j,c_sock[j],c_sock_size );
+				}else printf("Not propagating to %d since its equal to %d\n",c_sock[j],clip_rcv );
+				}
 				//free(clipboard_cpy.data[i]);
 				clipboard_cpy.data[i]=clipboard.data[i];
+				pthread_mutex_lock(&lock);
+				clip_rcv=0;
+				pthread_mutex_unlock(&lock);
 			}
 		}
 	} 
 }
-void remove_me(int sockfd){
+void remove_me(int sockfd){ //Ta com problemas pra remover
 	int i,j;
+	printf("Removing clip at %d\n",sockfd );
 	pthread_mutex_lock(&lock_c);
 	for (i = 0; i < c_sock_size; ++i) if(c_sock[i]==sockfd) break;
 	else for(j=i;j<c_sock_size-1;j++) c_sock[i]=c_sock[i+1];
@@ -629,8 +642,8 @@ void remove_me(int sockfd){
 
 }
 
-void add_me(int sockfd){
-	
+void add_me(int sockfd){ //Ta aparecendo 0 no começo
+	printf("Adding new clip at %d\n",sockfd );
 	pthread_mutex_lock(&lock_c);
 	c_sock= realloc(c_sock, (c_sock_size+1)*sizeof(int));
 	c_sock_size++;
