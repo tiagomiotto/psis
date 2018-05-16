@@ -97,14 +97,15 @@ int main(int argc, char **argv){
 	else {
 		printf("Local mode\n");
 		clipboard = initLocalCp();
+		c_sock[0]=0;
 	}
 	
 	if(my_unix>0)pthread_create(&client_thread,NULL,app_connect,&my_unix);
 	if(my_inet>0)pthread_create(&clip_thread,NULL,clipboard_connection,&my_inet);
-	pthread_create(&propaga_thread,NULL,propagation_handler,NULL);
+	
 	pthread_join(clip_thread, NULL);
 	pthread_join(client_thread, NULL);
-	pthread_join(propaga_thread, NULL);
+	//pthread_join(propaga_thread, NULL);
 	//Fazer signhandler pra matar todas as threads no CTRL+C
 	//descobrir como matar todas as threads sem guardar os ids
 	//pthread_cleanup_push(3)?
@@ -252,6 +253,7 @@ int backup_paste(int clipboard_id, int region, void *buf, size_t count){
 		free(data);
 		return -1;
 	}
+	printf("Paste complete %s :%d\n",data, aux.dataSize);
 	free(data);
 	free(msg);
 	return retorno;
@@ -278,8 +280,8 @@ int create_unix_sock(){
 	strcpy(addr.sun_path, path);
 	unlink(path);
 		
-	chmod(SOCK_PATH, 0777);
-	chmod(path, 0777);
+	//chmod(SOCK_PATH, 0777);
+	//chmod(path, 0777);
 		
 	if((bind (my_fd, (struct sockaddr*)&addr, sizeof(struct sockaddr)))<0){
 		printf("Bind unsuccessful\n");
@@ -339,6 +341,7 @@ void *app_connection_handler(void*  sock){
 	int new_fd = *(int*)sock;
 	const int error = 0, success = 1;
 	int client=cl;
+	pthread_t propaga_thread;
 	printf("App handler thread created\n");
 	while(1){ 
 		if((recv(new_fd, msg, sizeof(Mensagem), 0))==0) {
@@ -411,8 +414,10 @@ void *app_connection_handler(void*  sock){
 				recv(new_fd, data, aux.dataSize, 0);
 				printf("data: %s\n", (char *)data);
 				free(clipboard.data[aux.region]);
+				//Mutex bloqueia aqui
 				clipboard.dataSize[aux.region] = aux.dataSize;
 				clipboard.data[aux.region] = data;
+				pthread_create(&propaga_thread,NULL,propagation_handler,&aux.region);
 			}
 			
 			printf("My friend %d pasted %s to region %d\n",new_fd,(char *)clipboard.data[aux.region],aux.region);
@@ -502,9 +507,10 @@ void *clipboard_handler(void* sock){ //Falta arrumar aqui
 	int i,j, okFlag;
 	int client;
 	size_t dataSizeToSend;
+	pthread_t propaga_thread;
 	
 	printf("Clipboard handler thread created\n");
-	printf("Server: My at client %d is online \n", cl );
+	printf("Server: My at client %d is online \n", new_fd );
 	
 
 
@@ -533,7 +539,7 @@ void *clipboard_handler(void* sock){ //Falta arrumar aqui
 					printf("My client %d disconnected\n", client);
 					break;
 				}	
-				printf("My client %d tried to copy from region %d, but it's empty\n",client,aux.region);
+				printf("My client %d tried to copy from region %d, but it's empty\n",new_fd,aux.region);
 			} 
 			/*else if(aux.dataSize < clipboard.dataSize[aux.region]){//cliente não tem espaço
 				if((send(new_fd, &error, sizeof(int), 0))==-1){
@@ -588,9 +594,13 @@ void *clipboard_handler(void* sock){ //Falta arrumar aqui
 				recv(new_fd, data, aux.dataSize, 0);
 				printf("data: %s\n", (char *)data);
 				free(clipboard.data[aux.region]);
+				
+				//Mutex lock aqui
 				clipboard.dataSize[aux.region] = aux.dataSize;
 				clipboard.data[aux.region] = data;
 				clip_rcv = new_fd;
+				int auxiliar=aux.region;
+				pthread_create(&propaga_thread,NULL,propagation_handler,&auxiliar);
 			}
 			
 			printf("My friend %d pasted %s to region %d\n",client,(char *)clipboard.data[aux.region],aux.region);
@@ -605,30 +615,18 @@ void *clipboard_handler(void* sock){ //Falta arrumar aqui
 
 	pthread_exit(NULL);
 }
-void *propagation_handler(){
-	Clipboard_struct clipboard_cpy=clipboard;
-
-	while(1){
-		int i,j;
-		for (i = 0; i < 10; ++i) //entra num ciclo infinito de sends
-		{
-			if(clipboard_cpy.data[i]!=clipboard.data[i]){ //Ponteiros alterados apontam pra outra memoria
-				for(j=0;j<c_sock_size;j++) {
-					
-					//Para não mandarr pro mesmo lado
-					if(c_sock[j]!=clip_rcv  && c_sock[j]>0){
-						backup_paste(c_sock[j],i,clipboard.data[i],clipboard.dataSize[i]);
-						printf("Propagating to %d:%d of c_sock_size %zu\n",j,c_sock[j],c_sock_size );
-				}else printf("Not propagating to %d since its equal to %d\n",c_sock[j],clip_rcv );
-				}
-				//free(clipboard_cpy.data[i]);
-				clipboard_cpy.data[i]=clipboard.data[i];
-				pthread_mutex_lock(&lock);
-				clip_rcv=0;
-				pthread_mutex_unlock(&lock);
-			}
+void *propagation_handler(void* region){
+	int regiao = *(int*)region;
+	int i;
+	if(c_sock[0]!=0 && clip_rcv!=c_sock[0]) backup_paste(c_sock[0],regiao,clipboard.data[regiao],clipboard.dataSize[regiao]);
+	
+	if(c_sock_size>1){
+		//if(c_sock[0]!=0) backup_copy(c_sock[0],regiao,clipboard.data[regiao],clipboard.dataSize[regiao]);
+		for(i=1;i<c_sock_size;i++){
+			backup_paste(c_sock[i],regiao,clipboard.data[regiao],clipboard.dataSize[regiao]);
 		}
-	} 
+	}
+
 }
 void remove_me(int sockfd){ //Ta com problemas pra remover
 	int i,j;
