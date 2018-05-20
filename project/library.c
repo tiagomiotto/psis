@@ -27,7 +27,7 @@ int clipboard_connect(char * clipboard_dir){
 
 }
 //Guardar o tamanho do buffer aqui, trocar os dados de uma string pra uma struct, pra poder mandar tanto inteiros como strings
-int clipboard_copy(int clipboard_id, int region, void *buf, size_t count){
+int clipboard_paste(int clipboard_id, int region, void *buf, size_t count){
 	if(region > 10) {
 		printf("Paste region out of bounds\n");
 		return -1;
@@ -54,7 +54,7 @@ int clipboard_copy(int clipboard_id, int region, void *buf, size_t count){
 	return aux.dataSize;
 
 }
-int clipboard_paste(int clipboard_id, int region, void *buf, size_t count){
+int clipboard_copy(int clipboard_id, int region, void *buf, size_t count){
 	Mensagem aux;
 	void *msg = malloc(sizeof(Mensagem));
 	void *data = malloc(count);

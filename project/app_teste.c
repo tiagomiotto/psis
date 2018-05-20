@@ -33,7 +33,7 @@ int main(){
 		
 		region_int= atoi(region);
 		
-		if((clipboard_paste(fd,region_int,dados,10))<0) {
+		if((clipboard_copy(fd,region_int,dados,10))<0) {
 			printf("paste failed \n");
 		}
 		else printf("Pasted: %s to region %d\n", dados,region_int);
@@ -44,7 +44,7 @@ int main(){
 		
 		region_int= atoi(region);
 		
-		if((clipboard_copy(fd,region_int,dados2,10))<0){
+		if((clipboard_paste(fd,region_int,dados2,10))<0){
 			printf("copy failed \n");
 		}
 		else printf("Copied %s from region %d\n", dados2, region_int);

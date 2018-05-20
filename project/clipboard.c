@@ -1,4 +1,4 @@
-
+#include <semaphore.h>
 #include "clipboard.h"
 
 typedef struct _clipboard {
@@ -15,7 +15,7 @@ void *clipboard_handler(void* sock);
 int create_inet_sock(char* port);
 void *app_connection_handler(void*  sock);
 void *clipboard_connection(void* sock);
-void *propagation_handler();
+int ppgtToParent(int clipboard_id, int region, void *buf, size_t count);
 void remove_me(int sockfd);
 void add_me(int sockfd);
 
@@ -25,11 +25,13 @@ int* c_sock;
 size_t c_sock_size;
 
 int clip_rcv=0;
+int region_rcv;
 
 int cl=0;
 int backup_sock=0;
 pthread_mutex_t lock;
 pthread_mutex_t lock_c;
+
 
 	Clipboard_struct clipboard; 
 	
@@ -81,8 +83,8 @@ int main(int argc, char **argv){
 					c_sock[c_sock_size-1]=backup_sock;
 				for(i=0;i<10;i++){
 
-					backup_copy(backup_sock,i,clipboard.data[i],sizeof(char)*10);
-					printf("data[%d]: %s\n", i, (char *)clipboard.data[i]);
+					backup_paste(backup_sock,i,clipboard.data[i],sizeof(char)*10);
+					//printf("data[%d]: %s\n", i, (char *)clipboard.data[i]);
 				}
 			}
 			else{
@@ -176,7 +178,7 @@ int sincronize(char* addr, char* port){
 	//printf("Connected to backup at %s\n", s);
 	return sockfd;
 }
-int backup_copy(int clipboard_id, int region, void *buf, size_t count){
+int backup_paste(int clipboard_id, int region, void *buf, size_t count){
 
 	int okFlag;
 	Mensagem aux;
@@ -189,7 +191,6 @@ int backup_copy(int clipboard_id, int region, void *buf, size_t count){
 
 	recv(clipboard_id, msg, sizeof(Mensagem), 0); //Lê se o cliente tem espaço para receber a informação
 	memcpy(&aux, msg, sizeof(Mensagem));
-	printf("allocSize: %zu\n", aux.dataSize);
 
 	if(aux.dataSize > 0){
 		clipboard.data[region] = malloc(aux.dataSize);
@@ -204,14 +205,13 @@ int backup_copy(int clipboard_id, int region, void *buf, size_t count){
 		
 	}else{ //position is empty or error
 		clipboard.data[region] = NULL;
-		printf("position empty\n");
 		return 0;
 	}
 	free(msg);
 	return aux.dataSize;
 }
 
-int backup_paste(int clipboard_id, int region, void *buf, size_t count){
+int backup_copy(int clipboard_id, int region, void *buf, size_t count){
 	Mensagem aux;
 	void *msg = malloc(sizeof(Mensagem));
 	void *data = malloc(count);
@@ -222,7 +222,7 @@ int backup_paste(int clipboard_id, int region, void *buf, size_t count){
 		free(msg);
 		return -1;
 	}
-	printf("message: %s\n", (char *)buf);
+	printf("Vou mandar para o clipboard %d message: %s\n", clipboard_id, (char *)buf);
 	printf("count: %d\n", (int)count);
 	aux.region=region;
 	aux.oper=1;
@@ -236,14 +236,7 @@ int backup_paste(int clipboard_id, int region, void *buf, size_t count){
 		free(data);
 		return -1;
 	}
-	recv(clipboard_id, &okFlag, sizeof(int), 0); //recebe o OK do clipboard depois de ter alocado memória para receber a mensagem
-	if (!okFlag){
-		printf("Problem with clipboard\n");
-		remove_me(clipboard_id);
-		free(msg);
-		free(data);		
-		return -1;
-	}
+
 	memcpy(data, buf, count);
 	retorno=send(clipboard_id, data, aux.dataSize, 0); //envia a mensagem
 	if(retorno<=0){
@@ -253,7 +246,7 @@ int backup_paste(int clipboard_id, int region, void *buf, size_t count){
 		free(data);
 		return -1;
 	}
-	printf("Paste complete %s :%d\n",data, aux.dataSize);
+	printf("Paste complete %s :%d\n", (char *)data, (int)aux.dataSize);
 	free(data);
 	free(msg);
 	return retorno;
@@ -338,6 +331,7 @@ int create_inet_sock(char* port){
 void *app_connection_handler(void*  sock){
 	//Talk to me
 	void *data;
+	int i;
 	int new_fd = *(int*)sock;
 	const int error = 0, success = 1;
 	int client=cl;
@@ -351,10 +345,9 @@ void *app_connection_handler(void*  sock){
 		}//Implementar verificação se a região esta fora do alcance aqui
 		//Guardar o tamanho do buffer aqui, trocar os dados de uma string pra uma struct, pra poder mandar tanto inteiros como strings
 		memcpy(&aux,msg,sizeof(Mensagem));
-		printf("mutex at client %d locking\n",client);
-		pthread_mutex_lock(&lock);
 		
-		if(aux.oper==0) //Copy
+		
+		if(aux.oper==0) //Paste
 		{
 
 			if(clipboard.dataSize[aux.region]==0){
@@ -396,10 +389,10 @@ void *app_connection_handler(void*  sock){
 					printf("My client disconnected\n");
 					break;
 				}
-				printf("My friend %d copied %s from region %d\n",client,(char *)clipboard.data[aux.region], aux.region);
+				printf("My friend %d read %s from region %d\n",client,(char *)clipboard.data[aux.region], aux.region);
 			}
 		}
-		else if (aux.oper ==1 ) //Paste
+		else if (aux.oper ==1 ) //Copy
 		{	
 			int okFlag;
 			data = malloc(aux.dataSize);
@@ -413,18 +406,30 @@ void *app_connection_handler(void*  sock){
 				send(new_fd, &okFlag, sizeof(int), 0);
 				recv(new_fd, data, aux.dataSize, 0);
 				printf("data: %s\n", (char *)data);
-				free(clipboard.data[aux.region]);
-				//Mutex bloqueia aqui
-				clipboard.dataSize[aux.region] = aux.dataSize;
-				clipboard.data[aux.region] = data;
-				pthread_create(&propaga_thread,NULL,propagation_handler,&aux.region);
+				
+				
+				if(c_sock[0] == 0){
+					pthread_mutex_lock(&lock);
+					printf("mutex at client %d locked\n",client);
+					free(clipboard.data[aux.region]);
+					clipboard.dataSize[aux.region] = aux.dataSize;
+					clipboard.data[aux.region] = data;
+					//Mutex pode desbloquear aqui
+					pthread_mutex_unlock(&lock);
+					printf("mutex at client %d unlocking\n",client);
+					//copy to children
+					for (i = 1; i < c_sock_size; i++){
+						backup_copy(c_sock[i], aux.region, data, aux.dataSize);
+					}
+				}
+				else
+					ppgtToParent(c_sock[0], aux.region, data, aux.dataSize);
 			}
 			
-			printf("My friend %d pasted %s to region %d\n",new_fd,(char *)clipboard.data[aux.region],aux.region);
+			printf("App %d pasted %s to region %d\n",new_fd,(char *)clipboard.data[aux.region],aux.region);
 
 		}
-		pthread_mutex_unlock(&lock);
-		printf("mutex at client %d unlocking\n",client);				
+						
 		
 	}
 
@@ -504,7 +509,7 @@ void *clipboard_handler(void* sock){ //Falta arrumar aqui
 	void *data;
 	int new_fd = *(int*)sock;
 	char data_aux[10][10];
-	int i,j, okFlag;
+	int i,j;
 	int client;
 	size_t dataSizeToSend;
 	pthread_t propaga_thread;
@@ -513,6 +518,7 @@ void *clipboard_handler(void* sock){ //Falta arrumar aqui
 	printf("Server: My at client %d is online \n", new_fd );
 	
 
+	//pthread_create(&propaga_thread,NULL,propagation_handler, NULL);
 
 	//Talk to me
 	while(1){ //Guardar o tamanho do buffer aqui, trocar os dados de uma string pra uma struct, pra poder mandar tanto inteiros como strings
@@ -526,87 +532,103 @@ void *clipboard_handler(void* sock){ //Falta arrumar aqui
 
 		memcpy(&aux,msg,sizeof(Mensagem));
 		
-		if(aux.oper==0) //Copy
+		if(aux.oper==0) //Paste
 		{
 
 			if(clipboard.dataSize[aux.region]==0){
 				//In case the region is empty
 				aux.dataSize = clipboard.dataSize[aux.region];
-				printf("empty okFlag: %d\n", (int)aux.dataSize);
 				memcpy(msg,&aux,sizeof(Mensagem));
 				if((send(new_fd, msg, sizeof(Mensagem), 0))==-1){
 					perror("send"); //Do I need the number of bytes?
 					printf("My client %d disconnected\n", client);
 					break;
 				}	
-				printf("My client %d tried to copy from region %d, but it's empty\n",new_fd,aux.region);
+				//printf("My client %d tried to copy from region %d, but it's empty\n",new_fd,aux.region);
 			} 
-			/*else if(aux.dataSize < clipboard.dataSize[aux.region]){//cliente não tem espaço
-				if((send(new_fd, &error, sizeof(int), 0))==-1){
-					perror("send");
-					printf("My client %d disconnected\n", client);
-					break;
-				}	
-				printf("My client %d tried to copy from region %d, but he doesn't have enough space\n",client,aux.region);
-			}*/			
+					
 			else{ //all good
-				printf("Tou a mandar success\n");
+				pthread_mutex_lock(&lock);
 				aux.dataSize = clipboard.dataSize[aux.region];
-				printf("okFlag: %d\n", (int)aux.dataSize);
+				data = malloc(aux.dataSize);
+				memcpy(data, clipboard.data[aux.region], aux.dataSize);
+				pthread_mutex_unlock(&lock);
+
+
 				memcpy(msg,&aux,sizeof(Mensagem));
 				if((send(new_fd, msg, sizeof(Mensagem), 0))==-1){
 					perror("send");
 					printf("My client %d disconnected\n", client);
 					break;
 				}
-
-				aux.dataSize = clipboard.dataSize[aux.region];
 				
-				memcpy(msg,&aux,sizeof(Mensagem));
 
-				if((send(new_fd, clipboard.data[aux.region], aux.dataSize, 0))==-1){
+				if((send(new_fd, data, aux.dataSize, 0))==-1){
 					perror("send"); 
 					printf("My client disconnected\n");
 					break;
 				}
-				/*if((send(new_fd, clipboard.data[aux.region], aux.dataSize, 0))==-1){
-					perror("send"); 
-					printf("My client disconnected\n");
-					break;
-				}*/
+				
 				printf("My friend %d copied %s from region %d\n",client,(char *)clipboard.data[aux.region], aux.region);
 			}
 		}
-		else if (aux.oper ==1 ) //Paste
+		else if (aux.oper ==1 ) //Copy
 		{	
-			int okFlag;
 			data = malloc(aux.dataSize);
+			printf("Recebi pedido de paste com tamanho %d, região %d, operação %d\n", (int)aux.dataSize, aux.region, aux.oper);
 			if(data == NULL){
 				printf("ERROR ALOCATING MEMORY\n");
-				okFlag = 0;
-				send(new_fd, &okFlag, sizeof(int), 0);
+				exit(1);
 			}
 			else{
-				pthread_mutex_lock(&lock);
-				//printf("mutex locking\n");
-				okFlag = 1;
-				send(new_fd, &okFlag, sizeof(int), 0);
 				recv(new_fd, data, aux.dataSize, 0);
-				printf("data: %s\n", (char *)data);
+				printf("Recebi de outro cb, data: %s\n", (char *)data);
+				
+				pthread_mutex_lock(&lock);
+				printf("mutex locking\n");
+				
 				free(clipboard.data[aux.region]);
 				
-				//Mutex lock aqui
 				clipboard.dataSize[aux.region] = aux.dataSize;
 				clipboard.data[aux.region] = data;
-				clip_rcv = new_fd;
-				int auxiliar=aux.region;
-				pthread_create(&propaga_thread,NULL,propagation_handler,&auxiliar);
+				pthread_mutex_unlock(&lock);
+				printf("mutex unlocked\n");
+
+				for (i = 1; i < c_sock_size; i++) //CB recebem sempre paste de cima, por isso podem propagar sempre
+					backup_copy(c_sock[i], aux.region, data, aux.dataSize);
+					
 			}
 			
-			printf("My friend %d pasted %s to region %d\n",client,(char *)clipboard.data[aux.region],aux.region);
+			printf("Another clipboard %d pasted %s to region %d\n",client,(char *)clipboard.data[aux.region],aux.region);
 
 		}
-		pthread_mutex_unlock(&lock);
+		else if(aux.oper == 2){//propagation to parent
+			data = malloc(aux.dataSize);
+			printf("vou propagar informação para o meu pai com tamanho %d, região %d, operação %d\n", (int)aux.dataSize, aux.region, aux.oper);
+			if(data == NULL){
+				printf("ERROR ALOCATING MEMORY\n");
+				exit(1);
+			}
+			else{
+				recv(new_fd, data, aux.dataSize, 0);
+				printf("Recebi de outro cb, data: %s\n", (char *)data);
+				if(c_sock[0] != 0)
+					ppgtToParent(c_sock[0], aux.region, data, aux.dataSize);
+				else{
+					pthread_mutex_lock(&lock);
+					free(clipboard.data[aux.region]);
+					//Mutex lock aqui
+					clipboard.dataSize[aux.region] = aux.dataSize;
+					clipboard.data[aux.region] = data;
+					pthread_mutex_unlock(&lock);
+					for (i = 1; i < c_sock_size; i++) //CB recebem sempre paste de cima, por isso podem propagar sempre
+						backup_copy(c_sock[i], aux.region, data, aux.dataSize);
+				}
+
+			}
+				
+		} 
+
 		//printf("mutex unlocking\n");				
 		
 	}
@@ -615,19 +637,39 @@ void *clipboard_handler(void* sock){ //Falta arrumar aqui
 
 	pthread_exit(NULL);
 }
-void *propagation_handler(void* region){
-	int regiao = *(int*)region;
-	int i;
-	if(c_sock[0]!=0 && clip_rcv!=c_sock[0]) backup_paste(c_sock[0],regiao,clipboard.data[regiao],clipboard.dataSize[regiao]);
+int ppgtToParent(int clipboard_id, int region, void *buf, size_t count){
+	int retorno;
+	Mensagem aux;
+	void *msg = malloc(sizeof(Mensagem));
+	void *data = malloc(count);
 	
-	if(c_sock_size>1){
-		//if(c_sock[0]!=0) backup_copy(c_sock[0],regiao,clipboard.data[regiao],clipboard.dataSize[regiao]);
-		for(i=1;i<c_sock_size;i++){
-			backup_paste(c_sock[i],regiao,clipboard.data[regiao],clipboard.dataSize[regiao]);
-		}
+	aux.region=region;
+	aux.oper=2;
+	aux.dataSize = count;
+	memcpy(msg,&aux,sizeof(Mensagem));
+	retorno=send(clipboard_id,msg,sizeof(Mensagem),0); //informa o clipboard do tamanho da mensagem
+	if(retorno<=0){
+		printf("Problem sending info\n");
+		remove_me(clipboard_id);
+		free(msg);
+		free(data);
+		return -1;
 	}
-
+	memcpy(data, buf, count);
+	retorno=send(clipboard_id, data, aux.dataSize, 0); //envia a mensagem
+	if(retorno<=0){
+		printf("Problem sending data\n");
+		remove_me(clipboard_id);
+		free(msg);
+		free(data);
+		return -1;
+	}
+	printf("propagation complete %s :%d\n",(char *)data, (int)aux.dataSize);
+	free(data);
+	free(msg);
+	return retorno;//propaga informação para cima sem escrever
 }
+
 void remove_me(int sockfd){ //Ta com problemas pra remover
 	int i,j;
 	printf("Removing clip at %d\n",sockfd );
@@ -637,7 +679,7 @@ void remove_me(int sockfd){ //Ta com problemas pra remover
 	c_sock= realloc(c_sock, (c_sock_size-1)*sizeof(int));
 	c_sock_size--;
 	pthread_mutex_unlock(&lock_c);
-
+	return;
 }
 
 void add_me(int sockfd){ //Ta aparecendo 0 no começo
@@ -647,6 +689,7 @@ void add_me(int sockfd){ //Ta aparecendo 0 no começo
 	c_sock_size++;
 	c_sock[c_sock_size-1]=sockfd;
 	pthread_mutex_unlock(&lock_c);
+	return;
 }
 
 
