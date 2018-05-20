@@ -70,7 +70,6 @@ int main()
         fgets(quit, 4, stdin);
         printf("\n");
 
-
     }
     clipboard_close(fd);
     exit(0);

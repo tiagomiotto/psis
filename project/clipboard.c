@@ -310,7 +310,7 @@ int create_unix_sock()
     }
     int pid = getpid();
     char path[20];
-    sprintf(path, "%s_%d", SOCK_PATH, pid);
+    sprintf(path, "%s%d", SOCK_PATH, pid);
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
     strcpy(addr.sun_path, path);
