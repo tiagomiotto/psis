@@ -38,11 +38,11 @@ pthread_cond_t conditions[10];
 
 
 Clipboard_struct clipboard;
-
+/*
 Mensagem aux;
 void *msg;
 int len_data;
-char buff[10];
+char buff[10];*/
 
 
 int main(int argc, char **argv)
@@ -52,7 +52,7 @@ int main(int argc, char **argv)
 
     //Thread variables
     pthread_t client_thread, clip_thread;
-    msg = malloc(sizeof(Mensagem));
+    //void* msg = malloc(sizeof(Mensagem));
     c_sock_size = 1;
     c_sock = malloc(sizeof(int));
 
@@ -129,7 +129,7 @@ int main(int argc, char **argv)
     pthread_mutex_destroy(&lock);
     pthread_mutex_destroy(&lock_c);
     destroyCond(conditions);
-    free(msg);
+    
     exit(0);
 
 }
@@ -376,7 +376,7 @@ int create_inet_sock(char *port)
         return -1;
     }
     free(res);
-    printf("Backup at %s:%s\n", SOCK_ADDR, port);
+    printf("Backup at %s:%s\n", p->ai_addr, port);
     return my_fd;
 }
 void *app_connection_handler(void  *sock)
@@ -385,6 +385,8 @@ void *app_connection_handler(void  *sock)
     void *data;
     int i;
     int new_fd = *(int *)sock;
+   Mensagem aux;
+   void *msg= malloc(sizeof(Mensagem));
     const int error = 0, success = 1;
     int client = new_fd;
     pthread_t propaga_thread;
@@ -468,7 +470,7 @@ void *app_connection_handler(void  *sock)
             else
             {
                 okFlag = 1;
-                send(new_fd, &okFlag, sizeof(int), 0);
+                send(new_fd, &okFlag, sizeof(int), MSG_NOSIGNAL);
                 recv(new_fd, data, aux.dataSize, 0);
                 printf("data: %s\n", (char *)data);
 
@@ -647,6 +649,8 @@ void *app_connect(void  *sock)
 void *clipboard_handler(void *sock)  //Falta arrumar aqui
 {
     void *data;
+      Mensagem aux;
+	void *msg= malloc(sizeof(Mensagem));
     int new_fd = *(int *)sock;
     char data_aux[10][10];
     int i, j;
