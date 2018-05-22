@@ -79,7 +79,7 @@ int clipboard_copy(int clipboard_id, int region, void *buf, size_t count)
     aux.oper = 1;
     aux.dataSize = count;
     memcpy(msg, &aux, sizeof(Mensagem));
-    retorno = send(clipboard_id, msg, sizeof(Mensagem), 0); //informa o clipboard do tamanho da mensagem
+    retorno = send(clipboard_id, msg, sizeof(Mensagem), MSG_NOSIGNAL); //informa o clipboard do tamanho da mensagem
     if(retorno <= 0)
     {
         printf("Problem sending info\n");
@@ -96,7 +96,7 @@ int clipboard_copy(int clipboard_id, int region, void *buf, size_t count)
         return -1;
     }
     memcpy(data, buf, count);
-    retorno = send(clipboard_id, data, aux.dataSize, 0); //envia a mensagem
+    retorno = send(clipboard_id, data, aux.dataSize, MSG_NOSIGNAL); //envia a mensagem
     if(retorno <= 0)
     {
         printf("Problem sending data\n");
@@ -124,7 +124,7 @@ int clipboard_wait(int clipboard_id, int region, void *buf, size_t count)
     aux.dataSize = count;
 
     memcpy(msg, &aux, sizeof(Mensagem));
-    send(clipboard_id, msg, sizeof(Mensagem), 0);
+    send(clipboard_id, msg, sizeof(Mensagem), MSG_NOSIGNAL);
 
     recv(clipboard_id, &okFlag, sizeof(int), 0); //Lê se o cliente tem espaço para receber a informação
 

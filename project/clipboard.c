@@ -218,7 +218,7 @@ int backup_paste(int clipboard_id, int region, void *buf, size_t count)
     void *msg = malloc(sizeof(Mensagem));
     aux.region = region;
     aux.oper = 0;
-
+	printf("Chamei paste, região %d, tamanho %zu, msg %s", region, count, (char *)buf);
     memcpy(msg, &aux, sizeof(Mensagem));
     send(clipboard_id, msg, sizeof(Mensagem), 0);
 
@@ -255,20 +255,21 @@ int backup_copy(int clipboard_id, int region, void *buf, size_t count)
     void *msg = malloc(sizeof(Mensagem));
     void *data = malloc(count);
     int retorno, okFlag;
-    if((strcmp(buf, "")) == 0 || (strcmp(buf, "\n")) == 0)
+    /*if((strcmp(buf, "")) == 0 || (strcmp(buf, "\n")) == 0)
     {
         printf("You can't paste an empty line\n");
         free(data);
         free(msg);
         return -1;
-    }
+    }*/
     printf("Vou mandar para o clipboard %d message: %s\n", clipboard_id, (char *)buf);
     printf("count: %d\n", (int)count);
     aux.region = region;
     aux.oper = 1;
     aux.dataSize = count;
     memcpy(msg, &aux, sizeof(Mensagem));
-    retorno = send(clipboard_id, msg, sizeof(Mensagem), 0); //informa o clipboard do tamanho da mensagem
+    printf("teste\n");
+    retorno = send(clipboard_id, msg, sizeof(Mensagem), MSG_NOSIGNAL); //informa o clipboard do tamanho da mensagem
     if(retorno <= 0)
     {
         printf("Problem sending info\n");
@@ -277,9 +278,9 @@ int backup_copy(int clipboard_id, int region, void *buf, size_t count)
         free(data);
         return -1;
     }
-
+	printf("teste2\n");
     memcpy(data, buf, count);
-    retorno = send(clipboard_id, data, aux.dataSize, 0); //envia a mensagem
+    retorno = send(clipboard_id, data, aux.dataSize, MSG_NOSIGNAL); //envia a mensagem
     if(retorno <= 0)
     {
         printf("Problem sending data\n");
