@@ -149,7 +149,8 @@ Clipboard_struct initLocalCp(void)
 
 void destroyCond (pthread_cond_t *cond)
 {
-    for(int i = 0; i < 10; i++)
+	int i;
+    for(i = 0; i < 10; i++)
     {
         pthread_cond_destroy(&conditions[i]);
     }
@@ -385,9 +386,9 @@ void *app_connection_handler(void  *sock)
     int i;
     int new_fd = *(int *)sock;
     const int error = 0, success = 1;
-    int client = cl;
+    int client = new_fd;
     pthread_t propaga_thread;
-    printf("App handler thread created\n");
+    printf("App handler thread created for client %d\n", client);
     while(1)
     {
         if((recv(new_fd, msg, sizeof(Mensagem), 0)) == 0)
@@ -484,13 +485,14 @@ void *app_connection_handler(void  *sock)
                     //Mutex pode desbloquear aqui
                     pthread_mutex_unlock(&lock);
                     printf("mutex at client %d unlocking\n", client);
-                    //copy to children
+                    
+                    //Propagate, copy to children
                     for (i = 1; i < c_sock_size; i++)
                     {
                         backup_copy(c_sock[i], aux.region, data, aux.dataSize);
                     }
                 }
-                else
+                else //Propagate to top node, and it will propagate
                     ppgtToParent(c_sock[0], aux.region, data, aux.dataSize);
             }
 
@@ -648,7 +650,7 @@ void *clipboard_handler(void *sock)  //Falta arrumar aqui
     int new_fd = *(int *)sock;
     char data_aux[10][10];
     int i, j;
-    int client;
+    int client=new_fd;
     size_t dataSizeToSend;
     pthread_t propaga_thread;
 
