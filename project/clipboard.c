@@ -53,6 +53,9 @@ int main(int argc, char **argv)
     //void* msg = malloc(sizeof(Mensagem));
     c_sock_size = 1;
     c_sock = malloc(sizeof(int));
+    void **test;
+    test=NULL;
+    //*test=NULL;
 
 
 
@@ -90,7 +93,7 @@ int main(int argc, char **argv)
         printf("\n mutex init failed\n");
         return 1;
     }
-    //for(i=0;i<argc;i++) printf("%s\n",argv[i]);
+
 
 
     //Connect to the backup server
@@ -132,16 +135,18 @@ int main(int argc, char **argv)
     if(my_unix > 0)pthread_create(&client_thread, NULL, app_connect, &my_unix);
     if(my_inet > 0)pthread_create(&clip_thread, NULL, clipboard_connection, &my_inet);
 
-    pthread_join(clip_thread, NULL);
-    pthread_join(client_thread, NULL);
+    pthread_join(clip_thread, test);
+    pthread_join(client_thread, test);
 
 
     close(my_inet); //I don't want to listen anymore
     close(my_unix); //I don't want to listen anymore
     pthread_mutex_destroy(&lock);
     pthread_mutex_destroy(&lock_c);
+    pthread_mutex_destroy(&lockMsg);
+    pthread_mutex_destroy(&lockRecvs);
     destroyCond(conditions);
-    
+    free(test);
     exit(0);
 
 }
@@ -216,9 +221,9 @@ int sincronize(char *addr, char *port)
     }
     free(servinfo);
 
-    //inet_ntop(p->ai_family,&(((struct sockaddr_in *)p->ai_addr)->sin_addr),s, sizeof s);
+    inet_ntop(p->ai_family,&(((struct sockaddr_in *)p->ai_addr)->sin_addr),s, sizeof s);
 
-    //printf("Connected to backup at %s\n", s);
+    printf("Connected to backup at %s\n", s);
     return sockfd;
 }
 int backup_paste(int clipboard_id, int region, void *buf, size_t count)
@@ -280,13 +285,7 @@ int backup_copy(int clipboard_id, int region, void *buf, size_t count)
     void *msg = malloc(sizeof(Mensagem));
     void *data = malloc(count);
     int retorno, okFlag;
-    /*if((strcmp(buf, "")) == 0 || (strcmp(buf, "\n")) == 0)
-    {
-        printf("You can't paste an empty line\n");
-        free(data);
-        free(msg);
-        return -1;
-    }*/
+
     printf("Vou mandar para o clipboard %d message: %s\n", clipboard_id, (char *)buf);
     printf("count: %d\n", (int)count);
     aux.region = region;
@@ -366,6 +365,8 @@ int create_inet_sock(char *port)
     socklen_t addr_size;
     struct addrinfo hints, *res, *p;
     int my_fd, new_fd, aux2;
+    char s[INET6_ADDRSTRLEN];
+
 
     //Prepare structs for the socket
     memset(&hints, 0, sizeof(hints));
@@ -403,8 +404,9 @@ int create_inet_sock(char *port)
         printf("server: failed to bind\n");
         return -1;
     }
+    inet_ntop(p->ai_family,&(((struct sockaddr_in *)p->ai_addr)->sin_addr),s, sizeof s);
     free(res);
-    printf("Backup at %s:%s\n", p->ai_addr, port);
+    printf("Backup at %s:%s\n", s, port);
     return my_fd;
 }
 void *app_connection_handler(void  *sock)
@@ -439,7 +441,7 @@ void *app_connection_handler(void  *sock)
             {
                 //In case the region is empty
 
-                if((send(new_fd, &error, sizeof(int), 0)) == -1)
+                if((send(new_fd, &error, sizeof(int), MSG_NOSIGNAL)) == -1)
                 {
                     perror("send"); //Do I need the number of bytes?
                     printf("My client %d disconnected\n", client);
@@ -449,7 +451,7 @@ void *app_connection_handler(void  *sock)
             }
             else if(aux.dataSize < clipboard.dataSize[aux.region]) //cliente não tem espaço
             {
-                if((send(new_fd, &error, sizeof(int), 0)) == -1)
+                if((send(new_fd, &error, sizeof(int), MSG_NOSIGNAL)) == -1)
                 {
                     perror("send");
                     printf("My client %d disconnected\n", client);
@@ -459,7 +461,7 @@ void *app_connection_handler(void  *sock)
             }
             else  //all good
             {
-                if((send(new_fd, &success, sizeof(int), 0)) == -1)
+                if((send(new_fd, &success, sizeof(int), MSG_NOSIGNAL)) == -1)
                 {
                     perror("send");
                     printf("My client %d disconnected\n", client);
@@ -470,13 +472,13 @@ void *app_connection_handler(void  *sock)
 
                 memcpy(msg, &aux, sizeof(Mensagem));
 
-                if((send(new_fd, msg, sizeof(aux), 0)) == -1)
+                if((send(new_fd, msg, sizeof(aux), MSG_NOSIGNAL)) == -1)
                 {
                     perror("send");
                     printf("My client disconnected\n");
                     break;
                 }
-                if((send(new_fd, clipboard.data[aux.region], aux.dataSize, 0)) == -1)
+                if((send(new_fd, clipboard.data[aux.region], aux.dataSize, MSG_NOSIGNAL)) == -1)
                 {
                     perror("send");
                     printf("My client disconnected\n");
@@ -509,10 +511,11 @@ void *app_connection_handler(void  *sock)
                     printf("sou pai\n");
                     pthread_mutex_lock(&lock);
                     printf("mutex at client %d locked\n", client);
+                    if((memcmp(data,"",1))!=0){
                     free(clipboard.data[aux.region]);
                     clipboard.dataSize[aux.region] = aux.dataSize;
                     clipboard.data[aux.region] = data;
-
+                    }
                     pthread_cond_broadcast(&conditions[aux.region]);
                     //Mutex pode desbloquear aqui
                     pthread_mutex_unlock(&lock);
@@ -612,6 +615,7 @@ void *app_connection_handler(void  *sock)
 }
 void *clipboard_connection(void *sock)
 {
+    //pthread_exit(NULL);
     int my_fd = *(int *)sock;
     int new_fd;
     struct sockaddr_in their_addr;
@@ -649,7 +653,7 @@ void *clipboard_connection(void *sock)
 }
 void *app_connect(void  *sock)
 {
-
+    //pthread_exit(NULL);
     int my_fd = *(int *)sock;
     int new_fd;
     struct sockaddr_in their_addr;
@@ -795,11 +799,12 @@ void *clipboard_handler(void *sock)  //Falta arrumar aqui
 
                 pthread_mutex_lock(&lock);
                 printf("mutex locking\n");
-
+                if((memcmp(data,"",1))!=0){
                 free(clipboard.data[aux.region]);
 
                 clipboard.dataSize[aux.region] = aux.dataSize;
                 clipboard.data[aux.region] = data;
+            }
                 pthread_cond_broadcast(&conditions[aux.region]);
                 pthread_mutex_unlock(&lock);
                 printf("mutex unlocked\n");

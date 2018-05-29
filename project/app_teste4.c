@@ -19,15 +19,15 @@ int main(){
 		exit(-1);
 	}
 	while(1) {
-		dados[0] = rand()%(122-65)+65;
+		//dados[0] = rand()%(122-65)+65;
 		//sleep(1);
 		// Sends the data to the cliboard server
-		copyData = clipboard_copy(fd, 0, dados, 2);
+		copyData = clipboard_paste(fd, 0, dados, 2);
 		if(copyData < 1) {
 			printf("Error on copy\n");
 		}
 		else {
-			//printf("Sent %d - data: %s\n", copyData, dados);
+			printf("Received %d - data: %s\n", copyData, dados);
 		}
 	}
 	

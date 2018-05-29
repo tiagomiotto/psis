@@ -1,7 +1,7 @@
 #define MAXDATASIZE 1000
 #define MYPORT "1337"
 #define MAX_CALLS 10
-#define SOCK_PATH "./sock/" //Descobrir como criar os sockets noutra pasta
+#define SOCK_PATH "/pr_" //Descobrir como criar os sockets noutra pasta
 #define SOCK_ADDR "127.0.0.1"
 #include <stdio.h>
 #include <stdlib.h>
