@@ -722,6 +722,7 @@ void *clipboard_handler(void *sock)  //Falta arrumar aqui
             printf("My client disconnected, waiting for a new one\n");
             break;
         }
+            pthread_mutex_unlock(&lockRecvs);
 
 
         memcpy(&aux, msg, sizeof(Mensagem));
@@ -733,7 +734,6 @@ void *clipboard_handler(void *sock)  //Falta arrumar aqui
 
         if(aux.oper == 0) //Paste
         {
-            pthread_mutex_unlock(&lockRecvs);
             if(clipboard.dataSize[aux.region] == 0)
             {
                 //In case the region is empty
@@ -794,9 +794,9 @@ void *clipboard_handler(void *sock)  //Falta arrumar aqui
             }
             else */if (1)
             {
-                printf("Recebi de outro cb, data: %s\n", (char *)data2);
                 if(aux.dataSize>0)recv(new_fd, data2, aux.dataSize, 0);
                 pthread_mutex_unlock(&lockRecvs);
+                printf("Recebi de outro cb, data: %s\n", (char *)data2);
 
                 memcpy(data, data2, aux.dataSize);
 
@@ -829,6 +829,7 @@ void *clipboard_handler(void *sock)  //Falta arrumar aqui
         }
         else if(aux.oper == 2) //propagation to parent
         {
+            
             data = malloc(aux.dataSize);
             printf("vou propagar informação para o meu pai com tamanho %d, região %d, operação %d\n", (int)aux.dataSize, aux.region, aux.oper);
             if(data == NULL)
