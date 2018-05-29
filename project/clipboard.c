@@ -20,6 +20,7 @@ int ppgtToParent(int clipboard_id, int region, void *buf, size_t count);
 void remove_me(int sockfd);
 void add_me(int sockfd);
 void destroyCond (pthread_cond_t *cond);
+int first_connection(int sock);
 
 Clipboard_struct initLocalCp(void);
 
@@ -108,10 +109,12 @@ int main(int argc, char **argv)
                 c_sock[c_sock_size - 1] = backup_sock;
                 pthread_mutex_unlock(&lock_c);
                 pthread_create(&backup_thread, NULL, clipboard_handler, &backup_sock); //para o backup
-                for(i = 0; i < 10; i++)
+                first_connection(backup_sock);
+                
+                /*for(i = 0; i < 10; i++)
                 {
                     backup_paste(backup_sock, i, clipboard.data[i], 10);
-                }
+                }*/
             }
             else
             {
@@ -286,7 +289,7 @@ int backup_copy(int clipboard_id, int region, void *buf, size_t count)
     void *data = malloc(count);
     int retorno, okFlag;
 
-    printf("Vou mandar para o clipboard %d message: %s\n", clipboard_id, (char *)buf);
+    printf("Vou mandar para o clipboard %d region %d message: %s\n", clipboard_id, region ,(char *)buf);
     printf("count: %d\n", (int)count);
     aux.region = region;
     aux.oper = 1;
@@ -305,8 +308,8 @@ int backup_copy(int clipboard_id, int region, void *buf, size_t count)
         free(data);
         return -1;
     }
+    if(aux.dataSize>0){
 	printf("teste2\n");
-    
     retorno = send(clipboard_id, data, aux.dataSize, MSG_NOSIGNAL); //envia a mensagem
     if(retorno <= 0)
     {
@@ -315,7 +318,7 @@ int backup_copy(int clipboard_id, int region, void *buf, size_t count)
         free(msg);
         free(data);
         return -1;
-    }
+    }}
     pthread_mutex_unlock(&lockMsg);
     printf("Paste complete %s :%d\n", (char *)data, (int)aux.dataSize);
     free(data);
@@ -730,7 +733,7 @@ void *clipboard_handler(void *sock)  //Falta arrumar aqui
 
         if(aux.oper == 0) //Paste
         {
-
+            pthread_mutex_unlock(&lockRecvs);
             if(clipboard.dataSize[aux.region] == 0)
             {
                 //In case the region is empty
@@ -784,16 +787,16 @@ void *clipboard_handler(void *sock)  //Falta arrumar aqui
             data = malloc(aux.dataSize);   //ponteiro que vai ser atribuído à posição do clipboard
             data2 = malloc(aux.dataSize); //ponteiro para fazer memcpy
             printf("Recebi pedido de copy com tamanho %d, região %d, operação %d\n", (int)aux.dataSize, aux.region, aux.oper);
-            if(data == NULL)
+           /* if(data == NULL)
             {
                 printf("ERROR ALOCATING MEMORY\n");
                 exit(1);
             }
-            else
+            else */if (1)
             {
-                recv(new_fd, data2, aux.dataSize, 0);
-                pthread_mutex_unlock(&lockRecvs);
                 printf("Recebi de outro cb, data: %s\n", (char *)data2);
+                if(aux.dataSize>0)recv(new_fd, data2, aux.dataSize, 0);
+                pthread_mutex_unlock(&lockRecvs);
 
                 memcpy(data, data2, aux.dataSize);
 
@@ -804,7 +807,7 @@ void *clipboard_handler(void *sock)  //Falta arrumar aqui
 
                 clipboard.dataSize[aux.region] = aux.dataSize;
                 clipboard.data[aux.region] = data;
-            }
+                }
                 pthread_cond_broadcast(&conditions[aux.region]);
                 pthread_mutex_unlock(&lock);
                 printf("mutex unlocked\n");
@@ -863,6 +866,17 @@ void *clipboard_handler(void *sock)  //Falta arrumar aqui
 
             }
 
+        }
+        else if (aux.oper ==3){
+            //Locks grandes
+                printf("First connect from %d\n", new_fd);
+                pthread_mutex_lock(&lock);
+                for(i=0;i<10;i++){
+                    backup_copy(new_fd,i,clipboard.data[i],clipboard.dataSize[i]);
+                    if(i==9) break;
+                }
+                pthread_mutex_unlock(&lock);
+                printf("First connect complete\n");
         }
 
         //printf("mutex unlocking\n");
@@ -945,5 +959,20 @@ void add_me(int sockfd)  //Ta aparecendo 0 no começo
     pthread_mutex_unlock(&lock_c);
     return;
 }
+int first_connection(int clipboard_id){
 
+    Mensagem aux;
+    void *msg = malloc(sizeof(Mensagem));
+
+    aux.region = 0;
+    aux.oper = 3;
+    printf("Chamei first_connection\n");
+
+
+    memcpy(msg, &aux, sizeof(Mensagem));
+    memcpy(msg, &aux, sizeof(Mensagem));
+    send(clipboard_id, msg, sizeof(Mensagem), 0);
+    free(msg);
+    return 1;
+}
 
