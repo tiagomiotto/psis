@@ -21,14 +21,22 @@ void remove_me(int sockfd);
 void add_me(int sockfd);
 void destroyCond (pthread_cond_t *cond);
 int first_connection(int sock);
+void kill_signal(int signo);
+void remove_my_thread(int sockfd,int* tds,int *tds_size);
+void add_my_thread(int sockfd,int* tds,int *tds_size);
 
 Clipboard_struct initLocalCp(void);
 
 int *c_sock;
 size_t c_sock_size;
-
+volatile sig_atomic_t kill_flag=0;
 int clip_rcv = 0;
 int region_rcv;
+    int *tdsa;
+    int tdsa_size=1;
+    int *tdsc;
+    
+    int tdsc_size=1;
 
 int cl = 0;
 int backup_sock = 0;
@@ -36,6 +44,7 @@ pthread_mutex_t lock;
 pthread_mutex_t lock_c;
 pthread_mutex_t lockMsg;
 pthread_mutex_t lockRecvs;
+pthread_mutex_t lock_sig;
 pthread_cond_t conditions[10];
 
 
@@ -47,11 +56,14 @@ Clipboard_struct clipboard;
 int main(int argc, char **argv)
 {
     unlink("127.0.0.1");
-
-
+    struct sigaction psa;
+    psa.sa_handler = kill_signal;
+	sigaction(SIGINT,&psa,NULL);
+	tdsc = malloc(sizeof(int));
+	tdsa = malloc(sizeof(int));
     //Thread variables
     pthread_t client_thread, clip_thread, backup_thread;
-    //void* msg = malloc(sizeof(Mensagem));
+    
     c_sock_size = 1;
     c_sock = malloc(sizeof(int));
     void **test;
@@ -74,26 +86,7 @@ int main(int argc, char **argv)
     my_inet = create_inet_sock(port);
     my_unix = create_unix_sock();
 
-    if (pthread_mutex_init(&lock, NULL) != 0)
-    {
-        printf("\n mutex init failed\n");
-        return 1;
-    }
-    if (pthread_mutex_init(&lock_c, NULL) != 0)
-    {
-        printf("\n mutex init failed\n");
-        return 1;
-    }
-    if (pthread_mutex_init(&lockMsg, NULL) != 0)
-    {
-        printf("\n mutex init failed\n");
-        return 1;
-    }
-    if (pthread_mutex_init(&lockRecvs, NULL) != 0)
-    {
-        printf("\n mutex init failed\n");
-        return 1;
-    }
+    if((init_mutex())!=0) return 1;
 
 
 
@@ -141,7 +134,7 @@ int main(int argc, char **argv)
     pthread_join(clip_thread, test);
     pthread_join(client_thread, test);
 
-
+	close(backup_sock);
     close(my_inet); //I don't want to listen anymore
     close(my_unix); //I don't want to listen anymore
     pthread_mutex_destroy(&lock);
@@ -150,8 +143,38 @@ int main(int argc, char **argv)
     pthread_mutex_destroy(&lockRecvs);
     destroyCond(conditions);
     free(test);
+    free(tdsa);
+    free(tdsc);
     exit(0);
 
+}
+int init_mutex(){
+    if (pthread_mutex_init(&lock, NULL) != 0)
+    {
+        printf("\n mutex init failed\n");
+        return 1;
+    }
+    if (pthread_mutex_init(&lock_c, NULL) != 0)
+    {
+        printf("\n mutex init failed\n");
+        return 1;
+    }
+    if (pthread_mutex_init(&lockMsg, NULL) != 0)
+    {
+        printf("\n mutex init failed\n");
+        return 1;
+    }
+    if (pthread_mutex_init(&lockRecvs, NULL) != 0)
+    {
+        printf("\n mutex init failed\n");
+        return 1;
+    }
+        if (pthread_mutex_init(&lock_sig, NULL) != 0)
+    {
+        printf("\n mutex init failed\n");
+        return 1;
+    }
+    return 0;
 }
 
 Clipboard_struct initLocalCp(void)
@@ -427,6 +450,11 @@ void *app_connection_handler(void  *sock)
     printf("App handler thread created for client %d\n", client);
     while(1)
     {
+		if(kill_flag==1){
+			 			close(new_fd);
+			 			remove_my_thread(pthread_self(),tdsa,&tdsa_size);
+    pthread_exit(NULL);
+		 }
         if((recv(new_fd, msg, sizeof(Mensagem), 0)) == 0)
         {
             printf("My client disconnected, waiting for a new one\n");
@@ -549,6 +577,7 @@ void *app_connection_handler(void  *sock)
             }
 
             printf("App %d pasted %s to region %d\n", new_fd, (char *)clipboard.data[aux.region], aux.region);
+            //free(data);
 
 
         }
@@ -612,7 +641,7 @@ void *app_connection_handler(void  *sock)
 
         }
     }
-
+	remove_my_thread(pthread_self(),tdsa,&tdsa_size);
     close(new_fd);
     pthread_exit(NULL);
 }
@@ -624,6 +653,15 @@ void *clipboard_connection(void *sock)
     struct sockaddr_in their_addr;
     pthread_t tid;
     socklen_t addr_size;
+    fd_set readfds;
+    int max_sd;
+    int activity;
+
+    struct timeval tv;
+    tv.tv_sec=0;
+    tv.tv_usec=15000;
+    
+    
     printf("Clipboard thread created\n");
     //if(c_sock[0] > 0)pthread_create(&tid, NULL, clipboard_handler, &c_sock[0]); //para o backup
     if((listen(my_fd, MAX_CALLS)) == -1)
@@ -633,10 +671,18 @@ void *clipboard_connection(void *sock)
     }
     while(1)
     {
-
+		//Para dar timeout no accept//
+		FD_ZERO(&readfds);
+		FD_SET(my_fd,&readfds);
+		max_sd=my_fd;
+		activity=select(max_sd+1,&readfds,NULL,NULL,&tv);
         //printf("Server: Connect to me \n");
-
+		//printf("select clip timed out\n");
+		tv.tv_sec=0;
+		tv.tv_usec=15000;
         //Connect it
+        if(FD_ISSET(my_fd,&readfds))
+        {
         addr_size = sizeof(their_addr);
         new_fd = accept(my_fd, (struct sockaddr *)&their_addr, &addr_size);
         if((new_fd) == -1)
@@ -648,10 +694,13 @@ void *clipboard_connection(void *sock)
         {
             add_me(new_fd);
             pthread_create(&tid, NULL, clipboard_handler, &new_fd);
+            add_my_thread(tid,tdsc,&tdsc_size);
         }
+		}
+        if(kill_flag==1) pthread_exit(NULL);
     }
-
-    pthread_join(tid, NULL);
+    int i;
+	for(i=0;i<tdsc_size;i++)pthread_join(tdsc[i], NULL);
     pthread_exit(NULL);
 }
 void *app_connect(void  *sock)
@@ -662,6 +711,12 @@ void *app_connect(void  *sock)
     struct sockaddr_in their_addr;
     pthread_t tid;
     socklen_t addr_size;
+     fd_set readfds;
+    int max_sd;
+    int activity;
+    struct timeval tv;
+    tv.tv_sec=0;
+    tv.tv_usec=15000;
     printf("App thread created\n");
 
 
@@ -674,8 +729,17 @@ void *app_connect(void  *sock)
 
     while(1)
     {
-        //Listen to it
-        //Connect it
+		if(kill_flag==1) pthread_exit(NULL);
+		//Para dar timeout no accept
+		FD_ZERO(&readfds);
+		FD_SET(my_fd,&readfds);
+		max_sd=my_fd;
+		activity=select(max_sd+1,&readfds,NULL,NULL,&tv);
+        //printf("select timed out\n");
+         tv.tv_sec=0;
+		tv.tv_usec=15000;
+		
+        if(FD_ISSET(my_fd,&readfds)){
         addr_size = sizeof(their_addr);
         new_fd = accept(my_fd, NULL, NULL);
         if((new_fd) == -1)
@@ -688,16 +752,20 @@ void *app_connect(void  *sock)
 
             pthread_create(&tid, NULL, app_connection_handler, &new_fd);
             cl++;
+            add_my_thread(tid,tdsa,&tdsa_size);
             //continue;
         }
+	}
+        
     }
     printf("a\n");
-    pthread_join(tid, NULL);
+    int i;
+    for(i=0;i<tdsa_size;i++)pthread_join(tdsa[i], NULL);
     pthread_exit(NULL);
 
 
 }
-void *clipboard_handler(void *sock)  //Falta arrumar aqui
+void *clipboard_handler(void *sock)  
 {
     void *data, *data2;
     Mensagem aux;
@@ -716,6 +784,13 @@ void *clipboard_handler(void *sock)  //Falta arrumar aqui
     //Talk to me
     while(1)  //Guardar o tamanho do buffer aqui, trocar os dados de uma string pra uma struct, pra poder mandar tanto inteiros como strings
     {
+				if(kill_flag==1){
+    remove_me(new_fd);
+    close(new_fd);
+    free(data2);
+remove_my_thread(pthread_self(),tdsc,&tdsc_size);
+    pthread_exit(NULL);
+		 }
         pthread_mutex_lock(&lockRecvs);
         if((recv(new_fd, msg, sizeof(Mensagem), 0)) == 0)
         {
@@ -780,6 +855,7 @@ void *clipboard_handler(void *sock)  //Falta arrumar aqui
                 }
                 pthread_mutex_unlock(&lockMsg);
                 printf("My friend %d copied %s from region %d\n", client, (char *)clipboard.data[aux.region], aux.region);
+                free(data);
             }
         }
         else if (aux.oper == 1 ) //Copy
@@ -825,6 +901,8 @@ void *clipboard_handler(void *sock)  //Falta arrumar aqui
 
 
             printf("Another clipboard %d pasted %s to region %d\n", client, (char *)clipboard.data[aux.region], aux.region);
+            free(data);
+            free(data2);
 
         }
         else if(aux.oper == 2) //propagation to parent
@@ -866,7 +944,7 @@ void *clipboard_handler(void *sock)  //Falta arrumar aqui
                 }
 
             }
-
+		free(data);
         }
         else if (aux.oper ==3){
             //Locks grandes
@@ -883,6 +961,7 @@ void *clipboard_handler(void *sock)  //Falta arrumar aqui
         //printf("mutex unlocking\n");
 
     }
+    remove_my_thread(pthread_self(),tdsc,&tdsc_size);
     remove_me(new_fd);
     close(new_fd);
     free(data2);
@@ -926,7 +1005,7 @@ int ppgtToParent(int clipboard_id, int region, void *buf, size_t count)
     return retorno;//propaga informação para cima sem escrever
 }
 
-void remove_me(int sockfd)  //Ta com problemas pra remover
+void remove_me(int sockfd)  
 {
     int i, j;
     printf("Removing clip at %d\n", sockfd );
@@ -950,7 +1029,7 @@ void remove_me(int sockfd)  //Ta com problemas pra remover
     return;
 }
 
-void add_me(int sockfd)  //Ta aparecendo 0 no começo
+void add_me(int sockfd)  
 {
     printf("Adding new clip at %d\n", sockfd );
     pthread_mutex_lock(&lock_c);
@@ -976,4 +1055,41 @@ int first_connection(int clipboard_id){
     free(msg);
     return 1;
 }
+void kill_signal(int signo){
+	
+	pthread_mutex_lock(&lock_sig);
+	kill_flag=1;
+	pthread_mutex_unlock(&lock_sig);
+	
+}
+void add_my_thread(int sockfd,int* tds,int *tds_size){
+	printf("Adding new thread at %d\n", sockfd );
 
+    tds = realloc(tds, (*tds_size + 1) * sizeof(int));
+    *tds_size++;
+    tds[*tds_size - 1] = sockfd;
+
+    return;
+}
+void remove_my_thread(int sockfd,int* tds,int *tds_size)  
+{
+    int i, j;
+    printf("Removing thread at %d\n", sockfd );
+
+
+
+
+        for (i = 0; i < *tds_size; ++i) 
+            if(tds[i] == sockfd) {
+                for(j = i; j < *tds_size - 1; j++) 
+                    tds[j] = tds[j + 1];
+                break;
+            }
+        tds = realloc(tds, (*tds_size - 1) * sizeof(int));
+        *tds_size--;
+    
+    
+    
+    
+    return;
+}
