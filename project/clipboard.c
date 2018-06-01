@@ -3,13 +3,12 @@
 
 typedef struct _clipboard
 {
-    size_t dataSize[10]; //dataSize[i] = sizeof clipboard[i]
+    size_t dataSize[10]; 
     void *data[10];
 } Clipboard_struct;
 
 int sincronize(char *addr, char *port);
 int backup_copy(int clipboard_id, int region, void *buf, size_t count);
-int backup_paste(int clipboard_id, int region, void *buf, size_t count);
 int create_unix_sock();
 void *app_connect(void  *sock);
 void *clipboard_handler(void *sock);
@@ -29,7 +28,7 @@ Clipboard_struct initLocalCp(void);
 
 int *c_sock;
 size_t c_sock_size;
-sig_atomic_t kill_flag = 0;
+sig_atomic_t kill_flag = 0; //Flag for SIGINT handling
 int clip_rcv = 0;
 int region_rcv;
 int *tdsa;
@@ -55,20 +54,23 @@ Clipboard_struct clipboard;
 
 int main(int argc, char **argv)
 {
-    unlink("127.0.0.1");
+    
+    //Handle CTRL C
     struct sigaction psa = {0};
     psa.sa_handler = kill_signal;
     sigaction(SIGINT, &psa, NULL);
-    //tdsc = malloc(sizeof(int));
-    //tdsa = malloc(sizeof(int));
+
     //Thread variables
     pthread_t client_thread, clip_thread, backup_thread;
 
+    ///Start sockets array
     c_sock_size = 1;
     c_sock = malloc(sizeof(int));
+
+    //Variable to avoid memory leak on pthread join
     void **test;
     test = NULL;
-    //*test=NULL;
+
 
 
 
@@ -137,8 +139,6 @@ int main(int argc, char **argv)
     pthread_rwlock_destroy(&cbLock);
     destroyCond(conditions);
     free(test);
-    //free(tdsa);
-    //free(tdsc);
     printf("exiting\n");
     exit(0);
 
@@ -200,7 +200,9 @@ void destroyCond (pthread_cond_t *cond)
         pthread_cond_destroy(&conditions[i]);
     }
 }
-
+/*****************************************************************************/
+/* sincronize. Creates a socket to comunicate with the top clipboard         */
+/*****************************************************************************/
 int sincronize(char *addr, char *port)
 {
     int sockfd, numbytes;
@@ -251,10 +253,12 @@ int sincronize(char *addr, char *port)
 
     inet_ntop(p->ai_family, &(((struct sockaddr_in *)p->ai_addr)->sin_addr), s, sizeof s);
 
-    printf("Connected to backup at %s\n", s);
+    //printf("Connected to backup at %s\n", s);
     return sockfd;
 }
-
+/*****************************************************************************/
+/* backup_copy. Sends a copy request to another clipboard .                  */
+/*****************************************************************************/
 int backup_copy(int clipboard_id, int region, void *buf, size_t count)
 {
     Mensagem aux;
@@ -296,6 +300,9 @@ int backup_copy(int clipboard_id, int region, void *buf, size_t count)
     free(msg);
     return retorno;
 }
+/*****************************************************************************/
+/* create_unix_sock. Creates unix socket for local communication with apps   */
+/*****************************************************************************/
 int create_unix_sock()
 {
 
@@ -332,6 +339,9 @@ int create_unix_sock()
     printf("Unix socket creation successfull at %s\n", path);
     return my_fd;
 }
+/*****************************************************************************/
+/* create_inet_sock. Creates inet socket for communication with clipboards   */
+/*****************************************************************************/
 int create_inet_sock(char *port)
 {
     //Variables for the unix socket (Talvez fazer isso dentro de uma função?)
@@ -380,9 +390,12 @@ int create_inet_sock(char *port)
     }
     inet_ntop(p->ai_family, &(((struct sockaddr_in *)p->ai_addr)->sin_addr), s, sizeof s);
     free(res);
-    printf("Backup at %s:%s\n", s, port);
+    printf("Socket for other clipboards at %s:%s\n", s, port);
     return my_fd;
 }
+/*****************************************************************************/
+/* app_connection_handle. Handler for the app communication thread           */
+/*****************************************************************************/
 void *app_connection_handler(void  *sock)
 {
     //Talk to me
@@ -503,10 +516,10 @@ void *app_connection_handler(void  *sock)
 
                 if(c_sock[0] == 0)
                 {
-                    printf("sou pai\n");
+                    //printf("sou pai\n");
                     pthread_rwlock_wrlock(&cbLock);
                     
-                    printf("mutex at client %d locked\n", client);
+                    //printf("mutex at client %d locked\n", client);
                     if(clipboard.data[aux.region] != NULL)
                         free(clipboard.data[aux.region]);
                         
@@ -515,9 +528,9 @@ void *app_connection_handler(void  *sock)
                     clipboard.data[aux.region] = data;
                     
                     pthread_cond_broadcast(&conditions[aux.region]);
-                    //Mutex pode desbloquear aqui
+                    
                     pthread_rwlock_unlock(&cbLock);
-                    printf("mutex at client %d unlocking\n", client);
+                    //printf("mutex at client %d unlocking\n", client);
 
                     //Propagate, copy to children
                     for (i = 1; i < c_sock_size; i++)
@@ -539,7 +552,7 @@ void *app_connection_handler(void  *sock)
                     pthread_mutex_lock(&lock_c);
                     aux_sockc = c_sock[0];
                     pthread_mutex_unlock(&lock_c);
-                    printf("não sou pai, c_sock[0] = %d\n", c_sock[0]);
+                    //printf("não sou pai, c_sock[0] = %d\n", c_sock[0]);
                     ppgtToParent(aux_sockc, aux.region, data, aux.dataSize);
                 }
             }
@@ -556,7 +569,7 @@ void *app_connection_handler(void  *sock)
             pthread_mutex_lock(&lock_c);
             pthread_cond_wait( &conditions[aux.region], &lock_c);
             pthread_mutex_unlock(&lock_c);
-            printf("My client %d is no longer waiting for the region %d\n", new_fd, aux.region);
+            //printf("My client %d is no longer waiting for the region %d\n", new_fd, aux.region);
             if(clipboard.dataSize[aux.region] == 0)
             {
                 //In case the region is empty
@@ -614,6 +627,9 @@ void *app_connection_handler(void  *sock)
     close(new_fd);
     pthread_exit(NULL);
 }
+/*****************************************************************************/
+/* clipboard_connection. Handler for the clipboard connection listener thread*/
+/*****************************************************************************/
 void *clipboard_connection(void *sock)
 {
     //pthread_exit(NULL);
@@ -624,7 +640,7 @@ void *clipboard_connection(void *sock)
     socklen_t addr_size;
     struct sockaddr_in their_addr;
     pthread_t tid;
-        pthread_attr_t attr;
+    pthread_attr_t attr;
     fd_set readfds;
     int max_sd;
     int activity;
@@ -646,19 +662,20 @@ void *clipboard_connection(void *sock)
     }
     while(1)
     {
+        //Handle CTRL C
         pthread_mutex_lock(&lock_sig);
         kill_me = kill_flag;
         pthread_mutex_unlock(&lock_sig);
         if(kill_me == 1) break;
-        //Para dar timeout no accept//
+
+        //Timeout on accept//
         FD_ZERO(&readfds);
         FD_SET(my_fd, &readfds);
         max_sd = my_fd;
         activity = select(max_sd + 1, &readfds, NULL, NULL, &tv);
-        //printf("Server: Connect to me \n");
-        //printf("select clip timed out\n");
         tv.tv_sec = 0;
         tv.tv_usec = 15000;
+
         //Connect it
         if(FD_ISSET(my_fd, &readfds))
         {
@@ -673,8 +690,7 @@ void *clipboard_connection(void *sock)
             {
                 for(i = 0; i < 10; i++)
                 {
-                    pthread_rwlock_rdlock(&cbLock);
-                    
+                    pthread_rwlock_rdlock(&cbLock);                 
                     count = clipboard.dataSize[i];
                     data = malloc(count);
                     memcpy(data, clipboard.data[i], count);
@@ -684,36 +700,39 @@ void *clipboard_connection(void *sock)
                 }
                 add_me(new_fd);
                 pthread_create(&tid, &attr, clipboard_handler, &new_fd);
-                //pthread_detach(tid);
-                //add_my_thread(tid, tdsc, &tdsc_size);
+
             }
         }
     }
     
-    //for(i = 0; i < tdsc_size; i++)pthread_join(tdsc[i], NULL);
+   
     printf("all apps are off\n");
     pthread_exit(NULL);
 }
+/*****************************************************************************/
+/* app_connection. Handler for the app connection listener thread            */
+/*****************************************************************************/
 void *app_connect(void  *sock)
 {
     int my_fd = *(int *)sock;
     int new_fd;
     struct sockaddr_in their_addr;
     socklen_t addr_size;
+
     //Thread variables
     pthread_t tid;
     pthread_attr_t attr;
+
     //Variables for select
     fd_set readfds;
     int max_sd;
     int activity;
     struct timeval tv;
-    //Variable for finalization
-    int kill_me;
     tv.tv_sec = 0;
     tv.tv_usec = 15000;
-    printf("App thread created\n");
-
+    //Variable for finalization
+    int kill_me;
+    
     //Set thread attribute as detached
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
@@ -729,16 +748,17 @@ void *app_connect(void  *sock)
 
     while(1)
     {
+        //Handle CTRL C
         pthread_mutex_lock(&lock_sig);
         kill_me = kill_flag;
         pthread_mutex_unlock(&lock_sig);
         if(kill_me == 1) break;
-        //Para dar timeout no accept
+
+        //Adds timeout on accept
         FD_ZERO(&readfds);
         FD_SET(my_fd, &readfds);
         max_sd = my_fd;
         activity = select(max_sd + 1, &readfds, NULL, NULL, &tv);
-        //printf("select timed out\n");
         tv.tv_sec = 0;
         tv.tv_usec = 15000;
 
@@ -755,7 +775,6 @@ void *app_connect(void  *sock)
             {
 
                 pthread_create(&tid, &attr, app_connection_handler, &new_fd);
-                //pthread_detach(tid);
  
             }
         }
@@ -763,10 +782,12 @@ void *app_connect(void  *sock)
     }
 
     int i;
-    //for(i = 0; i < tdsa_size; i++)pthread_join(tdsa[i], NULL);
     printf("all clipboards are off\n");
     pthread_exit(NULL);
 }
+/*****************************************************************************/
+/* clipboard_handler. Handler for the clipboard communication thread         */
+/*****************************************************************************/
 void *clipboard_handler(void *sock)
 {
     void *data, *data2;
@@ -782,11 +803,10 @@ void *clipboard_handler(void *sock)
     int kill_me = 0;
     int retorno;
 
-    printf("Clipboard handler thread created\n");
-    printf("Server: My at client %d is online \n", new_fd );
+    printf("Top: Clipboard at sockfd %d is online \n", new_fd );
 
     //Talk to me
-    while(1)  //Guardar o tamanho do buffer aqui, trocar os dados de uma string pra uma struct, pra poder mandar tanto inteiros como strings
+    while(1)  
     {
         pthread_mutex_lock(&lock_sig);
         kill_me = kill_flag;
@@ -918,7 +938,7 @@ void *clipboard_handler(void *sock)
         {
             data2 = malloc(aux.dataSize);
             data = malloc(aux.dataSize);
-            printf("vou propagar informação para o meu pai com tamanho %d, região %d, operação %d\n", (int)aux.dataSize, aux.region, aux.oper);
+            //printf("vou propagar informação para o meu pai com tamanho %d, região %d, operação %d\n", (int)aux.dataSize, aux.region, aux.oper);
             if(data == NULL)
             {
                 printf("ERROR ALOCATING MEMORY\n");
@@ -965,13 +985,15 @@ void *clipboard_handler(void *sock)
             free(data2);
         }
     }
-    //remove_my_thread(pthread_self(),tdsc,&tdsc_size);
+    
     remove_me(new_fd);
     close(new_fd);
     free(msg);
-    //free(data);
     pthread_exit(NULL);
 }
+/*****************************************************************************/
+/* ppgtToPArent. Sends a propagate request to another clipboard              */
+/*****************************************************************************/
 int ppgtToParent(int clipboard_id, int region, void *buf, size_t count)
 {
     int retorno;
@@ -1007,12 +1029,14 @@ int ppgtToParent(int clipboard_id, int region, void *buf, size_t count)
         return -1;
     }
     pthread_mutex_unlock(&lockMsg);
-    printf("propagation complete %s :%d\n", (char *)data, (int)aux.dataSize);
+    //printf("propagation complete %s :%d\n", (char *)data, (int)aux.dataSize);
     free(data);
     free(msg);
     return retorno;//propaga informação para cima sem escrever
 }
-
+/*****************************************************************************/
+/* remove_me. Remove a clipboard sockfd from memory when it disconnects      */
+/*****************************************************************************/
 void remove_me(int sockfd)
 {
     int i, j;
@@ -1038,7 +1062,9 @@ void remove_me(int sockfd)
     pthread_mutex_unlock(&lock_c);
     return;
 }
-
+/*****************************************************************************/
+/* add_me. Save a clipboard sockfd in memory when it connects                */
+/*****************************************************************************/
 void add_me(int sockfd)
 {
     printf("Adding new clip at %d\n", sockfd );
@@ -1049,7 +1075,9 @@ void add_me(int sockfd)
     pthread_mutex_unlock(&lock_c);
     return;
 }
-
+/*****************************************************************************/
+/* kill_signal. Handler for ctrl C                                           */
+/*****************************************************************************/
 void kill_signal(int signo)
 {
 
