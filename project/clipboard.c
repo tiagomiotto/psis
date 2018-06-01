@@ -143,6 +143,9 @@ int main(int argc, char **argv)
     exit(0);
 
 }
+/*****************************************************************************/
+/* init_mutex. Initialize the needed mutexes                                 */
+/*****************************************************************************/
 int init_mutex()
 {
     if(pthread_rwlock_init(&cbLock, NULL) != 0){
@@ -171,7 +174,9 @@ int init_mutex()
     }
     return 0;
 }
-
+/*****************************************************************************/
+/* initLocalCp. Initialize an empty clipboard .                              */
+/*****************************************************************************/
 Clipboard_struct initLocalCp(void)
 {
     Clipboard_struct cp;
@@ -184,7 +189,9 @@ Clipboard_struct initLocalCp(void)
 
     return cp;
 }
-
+/*****************************************************************************/
+/* destroyCond. Destroy all the phtread_conditions .                         */
+/*****************************************************************************/
 void destroyCond (pthread_cond_t *cond)
 {
     int i;
