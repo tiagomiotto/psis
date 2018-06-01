@@ -3,7 +3,7 @@
 
 typedef struct _clipboard
 {
-    size_t dataSize[10]; 
+    size_t dataSize[10];
     void *data[10];
 } Clipboard_struct;
 
@@ -23,6 +23,7 @@ int first_connection(int sock);
 void kill_signal(int signo);
 void add_my_thread(int sockfd, int *tds, int *tds_size);
 int init_mutex();
+int recvAll(int fd, void *data, size_t count);
 
 Clipboard_struct initLocalCp(void);
 
@@ -42,7 +43,6 @@ int backup_sock = 0;
 pthread_rwlock_t cbLock;
 pthread_mutex_t lock_c;
 pthread_mutex_t lockMsg;
-pthread_mutex_t lockRecvs;
 pthread_mutex_t lock_sig;
 pthread_cond_t conditions[10];
 
@@ -54,7 +54,7 @@ Clipboard_struct clipboard;
 
 int main(int argc, char **argv)
 {
-    
+
     //Handle CTRL C
     struct sigaction psa = {0};
     psa.sa_handler = kill_signal;
@@ -73,13 +73,7 @@ int main(int argc, char **argv)
 
 
 
-
-    //Variables for communication
-    int client;
-
-
     //Variables for the Backup sock
-    int i, aux_backup;
     char port[10];
     srand(time(NULL));
     sprintf(port, "%d", (rand() % 64738 + 1024));
@@ -125,19 +119,19 @@ int main(int argc, char **argv)
     }
 
     if(my_unix > 0)pthread_create(&client_thread, NULL, app_connect, &my_unix);
-    if(my_inet > 0)pthread_create(&clip_thread, NULL, clipboard_connection, &my_inet);
+    if(my_inet>0  && my_unix> 0)pthread_create(&clip_thread, NULL, clipboard_connection, &my_inet);
 
-    pthread_join(clip_thread, test);
-    pthread_join(client_thread, test);
-
+    if(my_inet > 0 && my_unix>0)pthread_join(clip_thread, test);
+    if(my_unix > 0)pthread_join(client_thread, test);
+    else printf("Unix Sock failed, exiting\n");
     close(backup_sock);
     close(my_inet); //I don't want to listen anymore
     close(my_unix); //I don't want to listen anymore
     pthread_mutex_destroy(&lock_c);
     pthread_mutex_destroy(&lockMsg);
-    pthread_mutex_destroy(&lockRecvs);
     pthread_rwlock_destroy(&cbLock);
     destroyCond(conditions);
+    unlink(SOCK_PATH);
     free(test);
     printf("exiting\n");
     exit(0);
@@ -148,7 +142,8 @@ int main(int argc, char **argv)
 /*****************************************************************************/
 int init_mutex()
 {
-    if(pthread_rwlock_init(&cbLock, NULL) != 0){
+    if(pthread_rwlock_init(&cbLock, NULL) != 0)
+    {
         printf("\n RWlock init failed\n");
         return 1;
     }
@@ -158,11 +153,6 @@ int init_mutex()
         return 1;
     }
     if (pthread_mutex_init(&lockMsg, NULL) != 0)
-    {
-        printf("\n mutex init failed\n");
-        return 1;
-    }
-    if (pthread_mutex_init(&lockRecvs, NULL) != 0)
     {
         printf("\n mutex init failed\n");
         return 1;
@@ -205,11 +195,9 @@ void destroyCond (pthread_cond_t *cond)
 /*****************************************************************************/
 int sincronize(char *addr, char *port)
 {
-    int sockfd, numbytes;
-    char buf[MAXDATASIZE];
+    int sockfd;
     struct addrinfo hints, *servinfo, *p;
     int aux2;
-    struct sockaddr_in ip;
     char s[INET6_ADDRSTRLEN];
 
     printf("Connecting to backup at %s:%s\n", addr, port);
@@ -263,15 +251,15 @@ int backup_copy(int clipboard_id, int region, void *buf, size_t count)
 {
     Mensagem aux;
     void *msg = malloc(sizeof(Mensagem));
-   
-        
-    int retorno, okFlag;
+
+
+    int retorno;
 
     aux.region = region;
     aux.oper = 1;
     aux.dataSize = count;
     memcpy(msg, &aux, sizeof(Mensagem));
-    
+
 
     pthread_mutex_lock(&lockMsg);
     retorno = send(clipboard_id, msg, sizeof(Mensagem), MSG_NOSIGNAL); //informa o clipboard do tamanho da mensagem
@@ -296,7 +284,6 @@ int backup_copy(int clipboard_id, int region, void *buf, size_t count)
         }
     }
     pthread_mutex_unlock(&lockMsg);
-    //printf("Paste complete %s :%d\n", (char *)buf, (int)aux.dataSize);
     free(msg);
     return retorno;
 }
@@ -306,8 +293,7 @@ int backup_copy(int clipboard_id, int region, void *buf, size_t count)
 int create_unix_sock()
 {
 
-    struct sockaddr_in their_addr;
-    struct addrinfo hints, *res, *p;
+
     int my_fd;
     struct sockaddr_un addr;
 
@@ -317,18 +303,15 @@ int create_unix_sock()
         printf("Socket unsuccessful\n");
         return -1;
     }
-    int pid = getpid();
-    char path[20];
-    sprintf(path, "%s%d", SOCK_PATH, pid);
+
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    strcpy(addr.sun_path, path);
-    unlink(path);
+    strcpy(addr.sun_path, SOCK_PATH);
 
-    //chmod(SOCK_PATH, 0777);
-    //chmod(path, 0777);
 
-    if((bind (my_fd, (struct sockaddr *)&addr, sizeof(struct sockaddr))) < 0)
+
+
+    if((bind (my_fd, (struct sockaddr *)&addr, sizeof(struct sockaddr_un))) < 0)
     {
         printf("Bind unsuccessful\n");
         perror("bind: unix");
@@ -336,7 +319,7 @@ int create_unix_sock()
         close(my_fd);
         return -1;
     }
-    printf("Unix socket creation successfull at %s\n", path);
+    printf("Unix socket creation successfull at %s\n", addr.sun_path);
     return my_fd;
 }
 /*****************************************************************************/
@@ -344,17 +327,15 @@ int create_unix_sock()
 /*****************************************************************************/
 int create_inet_sock(char *port)
 {
-    //Variables for the unix socket (Talvez fazer isso dentro de uma função?)
-    struct sockaddr_in their_addr;
-    socklen_t addr_size;
+    //Variables for inet sock
     struct addrinfo hints, *res, *p;
-    int my_fd, new_fd, aux2;
+    int my_fd, aux2;
     char s[INET6_ADDRSTRLEN];
 
 
     //Prepare structs for the socket
     memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET; //Only IPv4 for me AF_UNIX
+    hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_PASSIVE;
     unlink("127.0.0.1");
@@ -407,9 +388,8 @@ void *app_connection_handler(void  *sock)
     void *msg = malloc(sizeof(Mensagem));
     const int error = 0, success = 1;
     int client = new_fd;
-    pthread_t propaga_thread;
     int kill_me;
-    printf("App handler thread created for client %d\n", client);
+    printf("App handler thread created for app %d\n", client);
     while(1)
     {
         pthread_mutex_lock(&lock_sig);
@@ -421,44 +401,47 @@ void *app_connection_handler(void  *sock)
         }
         if((recv(new_fd, msg, sizeof(Mensagem), 0)) <= 0)
         {
-            printf("My client disconnected, waiting for a new one\n");
+            printf("App %d disconnected, waiting for a new one\n",client);
             break;
-        }//Implementar verificação se a região esta fora do alcance aqui
-        //Guardar o tamanho do buffer aqui, trocar os dados de uma string pra uma struct, pra poder mandar tanto inteiros como strings
+        }
         memcpy(&aux, msg, sizeof(Mensagem));
 
-
+        if(aux.region > 9 || aux.region < 0)
+        {
+            printf("App %d tried to access invalid region\n",client);
+            break;
+        }
         if(aux.oper == 0) //Paste
         {
-
+            pthread_rwlock_rdlock(&cbLock);
             if(clipboard.dataSize[aux.region] == 0)
             {
                 //In case the region is empty
 
                 if((send(new_fd, &error, sizeof(int), MSG_NOSIGNAL)) == -1)
                 {
-                    perror("send"); //Do I need the number of bytes?
-                    printf("My client %d disconnected\n", client);
+                    perror("send");
+                    printf("App %d disconnected\n", client);
                     break;
                 }
-                printf("My client %d tried to copy from region %d, but it's empty\n", client, aux.region);
+                printf("App %d tried to copy from region %d, but it's empty\n", client, aux.region);
             }
             else if(aux.dataSize < clipboard.dataSize[aux.region]) //cliente não tem espaço
             {
                 if((send(new_fd, &error, sizeof(int), MSG_NOSIGNAL)) == -1)
                 {
                     perror("send");
-                    printf("My client %d disconnected\n", client);
+                    printf("App %d disconnected\n", client);
                     break;
                 }
-                printf("My client %d tried to copy from region %d, but he doesn't have enough space\n", client, aux.region);
+                printf("App %d tried to copy from region %d, but he doesn't have enough space\n", client, aux.region);
             }
             else  //all good
             {
                 if((send(new_fd, &success, sizeof(int), MSG_NOSIGNAL)) == -1)
                 {
                     perror("send");
-                    printf("My client %d disconnected\n", client);
+                    printf("App %d disconnected\n", client);
                     break;
                 }
 
@@ -469,17 +452,18 @@ void *app_connection_handler(void  *sock)
                 if((send(new_fd, msg, sizeof(aux), MSG_NOSIGNAL)) == -1)
                 {
                     perror("send");
-                    printf("My client disconnected\n");
+                    printf("App %d disconnected\n",client);
                     break;
                 }
                 if((send(new_fd, clipboard.data[aux.region], aux.dataSize, MSG_NOSIGNAL)) == -1)
                 {
                     perror("send");
-                    printf("My client disconnected\n");
+                    printf("App %d disconnected\n",client);
                     break;
                 }
-                printf("My friend %d read %s from region %d\n", client, (char *)clipboard.data[aux.region], aux.region);
+                printf("App %d read %s from region %d\n", client, (char *)clipboard.data[aux.region], aux.region);
             }
+            pthread_rwlock_unlock(&cbLock);
         }
 
         else if (aux.oper == 1 ) //Copy
@@ -490,47 +474,45 @@ void *app_connection_handler(void  *sock)
             {
                 printf("ERROR ALOCATING MEMORY\n");
                 okFlag = 0;
-                if(send(new_fd, &okFlag, sizeof(int), MSG_NOSIGNAL)==-1)
+                if(send(new_fd, &okFlag, sizeof(int), MSG_NOSIGNAL) == -1)
                 {
                     perror("send");
-                    printf("My client disconnected\n");
+                    printf("App %d disconnected\n",client);
                     break;
                 }
             }
             else
             {
                 okFlag = 1;
-                if(send(new_fd, &okFlag, sizeof(int), MSG_NOSIGNAL)==-1)
+                if(send(new_fd, &okFlag, sizeof(int), MSG_NOSIGNAL) == -1)
                 {
                     perror("send");
-                    printf("My client disconnected\n");
+                    printf("App %d disconnected \n",client);
                     break;
                 }
-                if(recv(new_fd, data, aux.dataSize, 0)<=0)
+
+                if(recvAll(new_fd, data, aux.dataSize) == -1)
                 {
-                    printf("My client disconnected, waiting for a new one\n");
+                    printf("App %d disconnected, waiting for a new one\n", client);
                     break;
                 }
-                printf("data: %s\n", (char *)data);
+                //printf("data: %s\n", (char *)data);
 
 
                 if(c_sock[0] == 0)
                 {
-                    //printf("sou pai\n");
                     pthread_rwlock_wrlock(&cbLock);
-                    
-                    //printf("mutex at client %d locked\n", client);
+
                     if(clipboard.data[aux.region] != NULL)
                         free(clipboard.data[aux.region]);
-                        
+
 
                     clipboard.dataSize[aux.region] = aux.dataSize;
                     clipboard.data[aux.region] = data;
-                    
+
                     pthread_cond_broadcast(&conditions[aux.region]);
-                    
+
                     pthread_rwlock_unlock(&cbLock);
-                    //printf("mutex at client %d unlocking\n", client);
 
                     //Propagate, copy to children
                     for (i = 1; i < c_sock_size; i++)
@@ -547,57 +529,56 @@ void *app_connection_handler(void  *sock)
 
                     }
                 }
-                else  //Propagate to top node, and it will propagate
+                else  //Propagate to top node
                 {
                     pthread_mutex_lock(&lock_c);
                     aux_sockc = c_sock[0];
                     pthread_mutex_unlock(&lock_c);
-                    //printf("não sou pai, c_sock[0] = %d\n", c_sock[0]);
                     ppgtToParent(aux_sockc, aux.region, data, aux.dataSize);
                 }
             }
 
             printf("App %d pasted %s to region %d\n", new_fd, (char *)clipboard.data[aux.region], aux.region);
-            //free(data);
-
-
         }
         else if(aux.oper == 2)   //Wait
         {
 
-            printf("My client %d is waiting for the region %d\n", new_fd, aux.region);
+            printf("App %d is waiting for the region %d\n", new_fd, aux.region);
             pthread_mutex_lock(&lock_c);
             pthread_cond_wait( &conditions[aux.region], &lock_c);
             pthread_mutex_unlock(&lock_c);
-            //printf("My client %d is no longer waiting for the region %d\n", new_fd, aux.region);
+            if((recv(new_fd, msg, sizeof(Mensagem), 0)) <= 0){
+                printf("App %d died while waiting\n",client );
+                break;
+            }
             if(clipboard.dataSize[aux.region] == 0)
             {
                 //In case the region is empty
 
                 if((send(new_fd, &error, sizeof(int), 0)) == -1)
                 {
-                    perror("send"); //Do I need the number of bytes?
-                    printf("My client %d disconnected\n", client);
+                    perror("send");
+                    printf("App %d disconnected\n", client);
                     break;
                 }
-                printf("My client %d tried to copy from region %d, but it's empty\n", client, aux.region);
+                printf("App %d tried to copy from region %d, but it's empty\n", client, aux.region);
             }
             else if(aux.dataSize < clipboard.dataSize[aux.region]) //cliente não tem espaço
             {
                 if((send(new_fd, &error, sizeof(int), 0)) == -1)
                 {
                     perror("send");
-                    printf("My client %d disconnected\n", client);
+                    printf("App %d disconnected\n", client);
                     break;
                 }
-                printf("My client %d tried to copy from region %d, but he doesn't have enough space\n", client, aux.region);
+                printf("App %d tried to copy from region %d, but he doesn't have enough space\n", client, aux.region);
             }
             else  //all good
             {
                 if((send(new_fd, &success, sizeof(int), 0)) == -1)
                 {
                     perror("send");
-                    printf("My client %d disconnected\n", client);
+                    printf("App %d disconnected\n", client);
                     break;
                 }
 
@@ -608,21 +589,25 @@ void *app_connection_handler(void  *sock)
                 if((send(new_fd, msg, sizeof(aux), 0)) == -1)
                 {
                     perror("send");
-                    printf("My client disconnected\n");
+                    printf("App disconnected\n");
                     break;
                 }
                 if((send(new_fd, clipboard.data[aux.region], aux.dataSize, 0)) == -1)
                 {
                     perror("send");
-                    printf("My client disconnected\n");
+                    printf("App disconnected\n");
                     break;
                 }
-                printf("My friend %d waited and read %s from region %d\n", client, (char *)clipboard.data[aux.region], aux.region);
+                printf("App %d waited and read %s from region %d\n", client, (char *)clipboard.data[aux.region], aux.region);
             }
 
         }
+        else
+        {
+            printf("Invalid operation asked by App %d\n",client);
+            break;
+        }
     }
-    //remove_my_thread(pthread_self(),tdsa,&tdsa_size);
     free(msg);
     close(new_fd);
     pthread_exit(NULL);
@@ -643,7 +628,7 @@ void *clipboard_connection(void *sock)
     pthread_attr_t attr;
     fd_set readfds;
     int max_sd;
-    int activity;
+    //int activity;
     int kill_me;
     struct timeval tv;
     tv.tv_sec = 0;
@@ -672,7 +657,7 @@ void *clipboard_connection(void *sock)
         FD_ZERO(&readfds);
         FD_SET(my_fd, &readfds);
         max_sd = my_fd;
-        activity = select(max_sd + 1, &readfds, NULL, NULL, &tv);
+        select(max_sd + 1, &readfds, NULL, NULL, &tv);
         tv.tv_sec = 0;
         tv.tv_usec = 15000;
 
@@ -690,7 +675,7 @@ void *clipboard_connection(void *sock)
             {
                 for(i = 0; i < 10; i++)
                 {
-                    pthread_rwlock_rdlock(&cbLock);                 
+                    pthread_rwlock_rdlock(&cbLock);
                     count = clipboard.dataSize[i];
                     data = malloc(count);
                     memcpy(data, clipboard.data[i], count);
@@ -704,8 +689,8 @@ void *clipboard_connection(void *sock)
             }
         }
     }
-    
-   
+
+
     printf("all apps are off\n");
     pthread_exit(NULL);
 }
@@ -716,8 +701,8 @@ void *app_connect(void  *sock)
 {
     int my_fd = *(int *)sock;
     int new_fd;
-    struct sockaddr_in their_addr;
-    socklen_t addr_size;
+
+
 
     //Thread variables
     pthread_t tid;
@@ -726,13 +711,13 @@ void *app_connect(void  *sock)
     //Variables for select
     fd_set readfds;
     int max_sd;
-    int activity;
+    //int activity;
     struct timeval tv;
     tv.tv_sec = 0;
     tv.tv_usec = 15000;
     //Variable for finalization
     int kill_me;
-    
+
     //Set thread attribute as detached
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
@@ -758,13 +743,13 @@ void *app_connect(void  *sock)
         FD_ZERO(&readfds);
         FD_SET(my_fd, &readfds);
         max_sd = my_fd;
-        activity = select(max_sd + 1, &readfds, NULL, NULL, &tv);
+        select(max_sd + 1, &readfds, NULL, NULL, &tv);
         tv.tv_sec = 0;
         tv.tv_usec = 15000;
 
         if(FD_ISSET(my_fd, &readfds))
         {
-            addr_size = sizeof(their_addr);
+            //addr_size = sizeof(their_addr);
             new_fd = accept(my_fd, NULL, NULL);
             if((new_fd) == -1)
             {
@@ -775,13 +760,13 @@ void *app_connect(void  *sock)
             {
 
                 pthread_create(&tid, &attr, app_connection_handler, &new_fd);
- 
+
             }
         }
 
     }
 
-    int i;
+
     printf("all clipboards are off\n");
     pthread_exit(NULL);
 }
@@ -791,23 +776,20 @@ void *app_connect(void  *sock)
 void *clipboard_handler(void *sock)
 {
     void *data, *data2;
-    void *recvPtr;
     Mensagem aux;
     void *msg = malloc(sizeof(Mensagem));
     int new_fd = *(int *)sock;
-    char data_aux[10][10];
-    int i, j;
+
+    int i;
     int aux_sockc;
     int client = new_fd;
-    size_t dataSizeToSend;
-    pthread_t propaga_thread;
+
     int kill_me = 0;
-    int retorno, totalBytes;
 
     printf("Top: Clipboard at sockfd %d is online \n", new_fd );
 
     //Talk to me
-    while(1)  
+    while(1)
     {
         pthread_mutex_lock(&lock_sig);
         kill_me = kill_flag;
@@ -816,13 +798,13 @@ void *clipboard_handler(void *sock)
         {
             remove_me(new_fd);
             close(new_fd);
-            if(data2!=NULL)free(data2);
-            if(msg!=NULL) free(msg);
+            if(data2 != NULL)free(data2);
+            if(msg != NULL) free(msg);
             pthread_exit(NULL);
         }
         if((recv(new_fd, msg, sizeof(Mensagem), 0)) <= 0)
         {
-            printf("My client disconnected, waiting for a new one\n");
+            printf("Clipboard: My client disconnected, waiting for a new one\n");
             break;
         }
 
@@ -830,47 +812,36 @@ void *clipboard_handler(void *sock)
         memcpy(&aux, msg, sizeof(Mensagem));
         if(aux.region > 9)
         {
-            printf("OUTOFBOUNDS! (exiting)\n");
+            printf("Clipboard: OUTOFBOUNDS! (exiting)\n");
             break;
         }
 
         if (aux.oper == 1 ) //Copy
         {
-            totalBytes = 0;
             data = malloc(aux.dataSize);   //ponteiro que vai ser atribuído à posição do clipboard
             data2 = malloc(aux.dataSize); //ponteiro para fazer memcpy
             if(data == NULL || data2 == NULL)
             {
-                printf("ERROR ALOCATING MEMORY\n");
+                printf("Clipboard: ERROR ALOCATING MEMORY\n");
                 exit(1);
             }
-             else
+            else
             {
-                if(aux.dataSize > 0){
-                    do{ //ciclo para receber qualquer tamanho
-                        recvPtr = data2 + totalBytes;
-                        retorno = recv(new_fd, recvPtr, aux.dataSize, 0);
-                        if(retorno <= 0)
-                        {
-                            printf("My client disconnected, waiting for a new one\n");
-                            break;
-                        }
-                        totalBytes += retorno;
-                    } while(totalBytes < aux.dataSize);
-                    
-                    if(retorno <= 0)
+                if(aux.dataSize > 0)
+                {
+                    if(recvAll(new_fd, data2, aux.dataSize) == -1)
                     {
-                        printf("My client disconnected, waiting for a new one\n");
+                        printf("Clipboard: My client disconnected, waiting for a new one\n");
                         break;
                     }
-                    
+
                     memcpy(data, data2, aux.dataSize);
 
                     pthread_rwlock_wrlock(&cbLock);
-                    
+
                     if(clipboard.data[aux.region] != NULL)
                         free(clipboard.data[aux.region]);
-                
+
 
                     clipboard.dataSize[aux.region] = aux.dataSize;
                     clipboard.data[aux.region] = data;
@@ -891,37 +862,25 @@ void *clipboard_handler(void *sock)
 
 
             printf("Another clipboard %d pasted %s to region %d\n", client, (char *)clipboard.data[aux.region], aux.region);
-            
+
             free(data2);
 
         }
         else if(aux.oper == 2) //propagation to parent
         {
-            totalBytes = 0;
             data2 = malloc(aux.dataSize);
             data = malloc(aux.dataSize);
-            //printf("vou propagar informação para o meu pai com tamanho %d, região %d, operação %d\n", (int)aux.dataSize, aux.region, aux.oper);
+
             if(data == NULL)
             {
-                printf("ERROR ALOCATING MEMORY\n");
+                printf("Clipboard: ERROR ALOCATING MEMORY\n");
                 exit(1);
             }
             else
             {
-                do{
-                    recvPtr = data2 + totalBytes;
-                    retorno = recv(new_fd, recvPtr, aux.dataSize, 0);
-                    if(retorno <= 0)
-                    {
-                        printf("My client disconnected, waiting for a new one\n");
-                        break;
-                    }
-                    totalBytes += retorno;
-                } while(totalBytes < aux.dataSize);
-                
-                if(retorno <= 0)
+                if(recvAll(new_fd, data2, aux.dataSize) == -1)
                 {
-                    printf("My client disconnected, waiting for a new one\n");
+                    printf("Clipboard: My clipboard client disconnected, waiting for a new one\n");
                     break;
                 }
                 memcpy(data, data2, aux.dataSize);
@@ -936,10 +895,10 @@ void *clipboard_handler(void *sock)
                 else
                 {
                     pthread_rwlock_wrlock(&cbLock);
-                    
+
                     if(clipboard.data[aux.region] != NULL)
                         free(clipboard.data[aux.region]);
-                    //Mutex lock aqui
+
                     clipboard.dataSize[aux.region] = aux.dataSize;
                     clipboard.data[aux.region] = data;
                     pthread_cond_broadcast(&conditions[aux.region]);
@@ -957,7 +916,7 @@ void *clipboard_handler(void *sock)
             free(data2);
         }
     }
-    
+
     remove_me(new_fd);
     close(new_fd);
     free(msg);
@@ -1001,10 +960,9 @@ int ppgtToParent(int clipboard_id, int region, void *buf, size_t count)
         return -1;
     }
     pthread_mutex_unlock(&lockMsg);
-    //printf("propagation complete %s :%d\n", (char *)data, (int)aux.dataSize);
     free(data);
     free(msg);
-    return retorno;//propaga informação para cima sem escrever
+    return retorno;
 }
 /*****************************************************************************/
 /* remove_me. Remove a clipboard sockfd from memory when it disconnects      */
@@ -1060,5 +1018,24 @@ void kill_signal(int signo)
     return;
 
 }
+/*****************************************************************************/
+/* recvAll. Forces the reception of all bytes                                */
+/*****************************************************************************/
+int recvAll(int fd, void *data, size_t count)
+{
+    int totalBytes = 0, retorno;
+    void *recvPtr;
+    do
+    {
+        recvPtr = data + totalBytes;
+        retorno = recv(fd, recvPtr, count, MSG_NOSIGNAL);
+        if(retorno <= 0)
+        {
+            return -1;
+        }
 
-
+        totalBytes += retorno;
+    }
+    while(totalBytes < count);
+    return 0;
+}

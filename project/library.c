@@ -23,7 +23,7 @@ int clipboard_connect(char *clipboard_dir)
         perror("client: connect");
         return -1;
     }
-    printf("Connected to my bro %s\n", s);
+    printf("Connected to a clipboard at %s\n", clipboard_dir);
 
     return sockfd;
 
@@ -31,6 +31,9 @@ int clipboard_connect(char *clipboard_dir)
 
 int clipboard_paste(int clipboard_id, int region, void *buf, size_t count)
 {
+    int totalBytes = 0;
+    int retorno;
+    void *recvPtr;
     if(region > 10)
     {
         printf("Paste region out of bounds\n");
@@ -52,7 +55,16 @@ int clipboard_paste(int clipboard_id, int region, void *buf, size_t count)
     {
         if((recv(clipboard_id, msg, sizeof(Mensagem), 0)) < 0) return -1;
         memcpy(&aux, msg, sizeof(Mensagem));
-        if((recv(clipboard_id, buf, aux.dataSize, 0)) < 0) return -1;
+        do{ //read enquanto existe mensagem a ser enviada
+            recvPtr = buf + totalBytes;
+            retorno = recv(clipboard_id, recvPtr, aux.dataSize, 0);
+            if(retorno <= 0)
+            {
+                printf("My client disconnected, waiting for a new one\n");
+                return -1;
+            }
+            totalBytes += retorno;
+        } while(totalBytes < aux.dataSize);  
     }
     else return -1;
 
@@ -73,8 +85,8 @@ int clipboard_copy(int clipboard_id, int region, void *buf, size_t count)
         free(msg);
         return -1;
     }
-    printf("message: %s\n", (char *)buf);
-    printf("count: %zx\n", count);
+    //printf("message: %s\n", (char *)buf);
+    //printf("count: %zx\n", count);
     aux.region = region;
     aux.oper = 1;
     aux.dataSize = count;
