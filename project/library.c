@@ -44,7 +44,7 @@ int clipboard_paste(int clipboard_id, int region, void *buf, size_t count)
     aux.dataSize = count;
 
     memcpy(msg, &aux, sizeof(Mensagem));
-    send(clipboard_id, msg, sizeof(Mensagem), 0);
+    send(clipboard_id, msg, sizeof(Mensagem), MSG_NOSIGNAL);
 
     recv(clipboard_id, &okFlag, sizeof(int), 0); //Lê se o cliente tem espaço para receber a informação
 

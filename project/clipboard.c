@@ -397,10 +397,7 @@ void *app_connection_handler(void  *sock)
         pthread_mutex_unlock(&lock_sig);
         if(kill_me == 1)
         {
-            close(new_fd);
-            //remove_my_thread(pthread_self(),tdsa,&tdsa_size);
-            //pthread_mutex_unlock(&lock_c);
-            pthread_exit(NULL);
+            break;
         }
         if((recv(new_fd, msg, sizeof(Mensagem), 0)) <= 0)
         {
@@ -617,9 +614,10 @@ void *clipboard_connection(void *sock)
     int new_fd, i;
     void *data;
     size_t count;
+    socklen_t addr_size;
     struct sockaddr_in their_addr;
     pthread_t tid;
-    socklen_t addr_size;
+        pthread_attr_t attr;
     fd_set readfds;
     int max_sd;
     int activity;
@@ -627,6 +625,12 @@ void *clipboard_connection(void *sock)
     struct timeval tv;
     tv.tv_sec = 0;
     tv.tv_usec = 15000;
+
+    //Set thread attribute as detached
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    /*********************************/
+
 
     if((listen(my_fd, MAX_CALLS)) == -1)
     {
@@ -672,7 +676,8 @@ void *clipboard_connection(void *sock)
                     free(data);
                 }
                 add_me(new_fd);
-                pthread_create(&tid, NULL, clipboard_handler, &new_fd);
+                pthread_create(&tid, &attr, clipboard_handler, &new_fd);
+                //pthread_detach(tid);
                 //add_my_thread(tid, tdsc, &tdsc_size);
             }
         }
@@ -684,12 +689,13 @@ void *clipboard_connection(void *sock)
 }
 void *app_connect(void  *sock)
 {
-    //pthread_exit(NULL);
     int my_fd = *(int *)sock;
     int new_fd;
     struct sockaddr_in their_addr;
-    pthread_t tid;
     socklen_t addr_size;
+    //Thread variables
+    pthread_t tid;
+    pthread_attr_t attr;
     //Variables for select
     fd_set readfds;
     int max_sd;
@@ -701,6 +707,10 @@ void *app_connect(void  *sock)
     tv.tv_usec = 15000;
     printf("App thread created\n");
 
+    //Set thread attribute as detached
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    /*********************************/
 
 
     if((listen(my_fd, MAX_CALLS)) == -1)
@@ -737,10 +747,9 @@ void *app_connect(void  *sock)
             else
             {
 
-                pthread_create(&tid, NULL, app_connection_handler, &new_fd);
-                //cl++;
-                //add_my_thread(tid, tdsa, &tdsa_size);
-                //continue;
+                pthread_create(&tid, &attr, app_connection_handler, &new_fd);
+                //pthread_detach(tid);
+ 
             }
         }
 
@@ -779,8 +788,8 @@ void *clipboard_handler(void *sock)
         {
             remove_me(new_fd);
             close(new_fd);
-            //free(data2);
-            //remove_my_thread(pthread_self(),tdsc,&tdsc_size);
+            if(data2!=NULL)free(data2);
+            if(msg!=NULL) free(msg);
             pthread_exit(NULL);
         }
         if((recv(new_fd, msg, sizeof(Mensagem), 0)) <= 0)
@@ -1040,20 +1049,9 @@ void kill_signal(int signo)
     pthread_mutex_lock(&lock_sig);
     kill_flag = 1;
     pthread_mutex_unlock(&lock_sig);
-    pthread_mutex_lock(&lock_sig);
 
-    pthread_mutex_unlock(&lock_sig);
     return;
 
 }
-void add_my_thread(int sockfd, int *tds, int *tds_size)
-{
-    printf("Adding new thread at %d\n", sockfd );
 
-    tds = realloc(tds, (*tds_size + 1) * sizeof(int));
-    *tds_size++;
-    tds[*tds_size - 1] = sockfd;
-
-    return;
-}
 
