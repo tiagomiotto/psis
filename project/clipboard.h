@@ -1,7 +1,7 @@
 #define MAXDATASIZE 1000
 #define MYPORT "1337"
 #define MAX_CALLS 10
-#define SOCK_PATH "./"
+#define SOCK_PATH "CLIPBOARD_SOCKET" 
 #define SOCK_ADDR "127.0.0.1"
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,7 +23,7 @@
 #include <stdbool.h>
 typedef struct Mensagem{
 	int region;
-	char dados[10];
+	size_t dataSize;
 	int oper;
 }Mensagem;
 
@@ -32,4 +32,5 @@ typedef struct Mensagem{
 int clipboard_connect(char * clipboard_dir);
 int clipboard_copy(int clipboard_id, int region, void *buf, size_t count);
 int clipboard_paste(int clipboard_id, int region, void *buf, size_t count);
-
+int clipboard_wait(int clipboard_id, int region, void *buf, size_t count);
+void clipboard_close(int clipboard_id);
